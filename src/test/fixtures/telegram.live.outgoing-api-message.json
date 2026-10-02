@@ -1,0 +1,31 @@
+{
+  "receiptId": 1647,
+  "body": {
+    "typeWebhook": "outgoingAPIMessageReceived",
+    "instanceData": {
+      "idInstance": 4100000000,
+      "wid": "79990000001@c.us",
+      "typeInstance": "telegram"
+    },
+    "timestamp": 1790944922,
+    "idMessage": "1790000000001",
+    "senderData": {
+      "chatId": "10000002",
+      "chatType": "user",
+      "sender": "10000001",
+      "chatName": "Тестовый Получатель",
+      "senderName": "Тестовый Получатель",
+      "senderType": "user",
+      "senderContactName": "Тестовый Получатель",
+      "senderPhoneNumber": 79990000001
+    },
+    "messageData": {
+      "typeMessage": "textMessage",
+      "textMessageData": {
+        "textMessage": "Тестовое сообщение",
+        "forwardingScore": 0,
+        "isForwarded": false
+      }
+    }
+  }
+}

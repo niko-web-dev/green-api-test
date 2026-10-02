@@ -1,0 +1,16 @@
+{
+  "receiptId": 1648,
+  "body": {
+    "typeWebhook": "outgoingMessageStatus",
+    "chatId": "10000002",
+    "instanceData": {
+      "idInstance": 4100000000,
+      "wid": "79990000001@c.us",
+      "typeInstance": "telegram"
+    },
+    "timestamp": 1790944922,
+    "idMessage": "1790000000001",
+    "status": "delivered",
+    "sendByApi": true
+  }
+}
