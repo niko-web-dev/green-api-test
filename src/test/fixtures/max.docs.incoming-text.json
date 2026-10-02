@@ -1,0 +1,26 @@
+{
+  "typeWebhook": "incomingMessageReceived",
+  "instanceData": {
+    "idInstance": 4100000000,
+    "wid": "79990000001@c.us",
+    "typeInstance": "v3"
+  },
+  "timestamp": 1763115112,
+  "idMessage": "1763115112345",
+  "senderData": {
+    "chatId": "10000002",
+    "chatName": "Тестовый Получатель",
+    "chatType": "user",
+    "sender": "10000002",
+    "senderName": "Тестовый Получатель",
+    "senderType": "user",
+    "senderContactName": "Тестовый Получатель",
+    "senderPhoneNumber": 79990000002
+  },
+  "messageData": {
+    "typeMessage": "textMessage",
+    "textMessageData": {
+      "textMessage": "Я использую GREEN-API для отправки этого сообщения!"
+    }
+  }
+}
