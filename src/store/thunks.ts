@@ -1,73 +1,17 @@
 import { createAsyncThunk } from '@reduxjs/toolkit'
-import type {
-  AsyncThunk,
-  AsyncThunkAction,
-  ThunkDispatch,
-  UnknownAction,
-} from '@reduxjs/toolkit'
-import { GreenApiError } from '../api/greenApiClient'
-import { MESSENGERS, normalizePhone } from '../messengers'
-import { readSession, sessionStarted } from './sessionSlice'
+import { GreenApiError, describeError } from '../api/greenApiClient'
+import { MESSENGERS, normalizePhone, validatePhone } from '../messengers'
+import { readSession, saveSession, sessionStarted } from './sessionSlice'
 import type { Session } from './sessionSlice'
 import { outgoingStarted } from './chatsSlice'
 import type { Chat } from './chatsSlice'
-import type { StoreState, StoreExtra, SessionScope } from './types'
+import type { StoreState, StoreExtra, SessionScope, AppThunk } from './types'
 
 type Config = { state: StoreState; extra: StoreExtra; rejectValue: string }
 const createOperation = createAsyncThunk.withTypes<Config>()
 const currentSessionOnly = {
   condition: (arg: SessionScope, api: { getState(): StoreState }) =>
     arg.sessionId === api.getState().session.sessionId,
-}
-
-// Публичные операции фиксируют поколение до запуска asyncThunk; оно попадёт в meta.arg.
-function scoped<Result, Arg extends SessionScope, Reject>(
-  operation: AsyncThunk<
-    Result,
-    Arg,
-    { state: StoreState; extra: StoreExtra; rejectValue: Reject }
-  >,
-) {
-  return Object.assign(
-    (arg: Omit<Arg, 'sessionId'> & Partial<SessionScope>) =>
-      (
-        dispatch: ThunkDispatch<StoreState, StoreExtra, UnknownAction>,
-        getState: () => StoreState,
-        extra: StoreExtra,
-      ) =>
-        (
-          operation as (
-            arg: Arg,
-          ) => AsyncThunkAction<
-            Result,
-            Arg,
-            { state: StoreState; extra: StoreExtra; rejectValue: Reject }
-          >
-        )({
-          ...arg,
-          sessionId: arg.sessionId ?? getState().session.sessionId,
-        } as Arg)(dispatch, getState, extra),
-    {
-      pending: operation.pending,
-      fulfilled: operation.fulfilled,
-      rejected: operation.rejected,
-      typePrefix: operation.typePrefix,
-    },
-  )
-}
-
-function safeError(error: unknown): string {
-  if (!(error instanceof GreenApiError))
-    return 'Не удалось выполнить запрос к GREEN-API.'
-  // Показываем только код HTTP и собственный текст: тело ответа и URL могут содержать токен.
-  const message = new GreenApiError(error.kind).message
-  const status = error.status
-  return typeof status === 'number' &&
-    Number.isInteger(status) &&
-    status >= 100 &&
-    status <= 599
-    ? `${message} (HTTP ${status})`
-    : message
 }
 
 const stateErrors: Record<string, string> = {
@@ -80,7 +24,7 @@ const stateErrors: Record<string, string> = {
     'Работа аккаунта ограничена. Проверьте состояние в кабинете GREEN-API.',
 }
 
-export const loginOperation = createOperation<void, Session & SessionScope>(
+export const login = createOperation<void, Session & SessionScope>(
   'session/login',
   async (arg, api) => {
     try {
@@ -106,33 +50,30 @@ export const loginOperation = createOperation<void, Session & SessionScope>(
         }),
       )
     } catch (error) {
-      return api.rejectWithValue(safeError(error))
+      return api.rejectWithValue(describeError(error))
     }
   },
   currentSessionOnly,
 )
-export const login = scoped(loginOperation)
 
-const restoreOperation = createOperation<void, SessionScope>(
-  'session/restore',
-  async (arg, api) => {
+export const restoreSession =
+  (): AppThunk<Promise<void>> => async (dispatch, getState) => {
     const saved = readSession()
     if (!saved) return
-    const result = await api.dispatch(
-      login({ ...saved, sessionId: arg.sessionId }),
+    const sessionId = getState().session.sessionId
+    const result = await dispatch(login({ ...saved, sessionId }))
+    // Иначе перезагрузка повторит заведомо неудачный вход.
+    if (
+      login.rejected.match(result) &&
+      !result.meta.aborted &&
+      !result.meta.condition &&
+      getState().session.sessionId === sessionId &&
+      !getState().session.loginRequestId
     )
-    if (login.rejected.match(result))
-      return api.rejectWithValue(
-        result.payload ?? 'Не удалось восстановить вход.',
-      )
-  },
-  currentSessionOnly,
-)
-const scopedRestore = scoped(restoreOperation)
-export const restoreSession = (arg: Partial<SessionScope> = {}) =>
-  scopedRestore(arg)
+      saveSession(null)
+  }
 
-export const openChatOperation = createOperation<
+export const openChat = createOperation<
   Chat,
   SessionScope & { phoneInput: string }
 >(
@@ -142,7 +83,7 @@ export const openChatOperation = createOperation<
     if (!current) return api.rejectWithValue('Сначала выполните вход.')
     const profile = MESSENGERS[current.messenger]
     const phone = normalizePhone(arg.phoneInput)
-    const invalid = profile.validatePhone(phone)
+    const invalid = validatePhone(phone)
     if (invalid) return api.rejectWithValue(invalid)
     const cached = Object.values(api.getState().chats.byId).find(
       (chat) => chat.phone === phone,
@@ -155,28 +96,28 @@ export const openChatOperation = createOperation<
         phone,
         signal,
       )
-      if (!resolved.chatId)
-        return api.rejectWithValue('GREEN-API не вернул идентификатор чата.')
+      if (!resolved)
+        return api.rejectWithValue(
+          `Номер не зарегистрирован в ${profile.title}`,
+        )
       return { ...resolved, phone, lastActivity: Date.now() / 1000 }
     } catch (error) {
       return api.rejectWithValue(
-        error instanceof GreenApiError
-          ? safeError(error)
-          : 'Номер не найден в выбранном мессенджере.',
+        describeError(error, 'Не удалось проверить номер.'),
       )
     }
   },
   currentSessionOnly,
 )
-export const openChat = scoped(openChatOperation)
 
 type SendArg = SessionScope & {
   chatId: string
   text: string
+  // Передаёт только retrySend, проверив, что повтор допустим.
   retryKey?: string
 }
 type SendError = { status: 'failed' | 'unknown'; error: string }
-export const sendMessageOperation = createAsyncThunk<
+export const sendMessage = createAsyncThunk<
   { chatId: string; key: string; idMessage: string },
   SendArg,
   { state: StoreState; extra: StoreExtra; rejectValue: SendError }
@@ -193,17 +134,6 @@ export const sendMessageOperation = createAsyncThunk<
       return fail(`Сообщение длиннее допустимых ${limit} символов.`)
     if (!api.getState().chats.byId[arg.chatId])
       return fail('Сначала откройте чат.')
-    const previous = arg.retryKey
-      ? api
-          .getState()
-          .chats.messagesByChat[arg.chatId]?.find((m) => m.key === arg.retryKey)
-      : undefined
-    if (
-      arg.retryKey &&
-      (!previous || !['failed', 'unknown'].includes(previous.status))
-    ) {
-      return fail('Это сообщение нельзя отправить повторно.')
-    }
     const key = arg.retryKey ?? api.requestId
     let submitted = false
     try {
@@ -247,15 +177,14 @@ export const sendMessageOperation = createAsyncThunk<
         status: uncertain ? 'unknown' : 'failed',
         error: uncertain
           ? 'Не удалось подтвердить отправку. Ручной повтор может создать дубликат.'
-          : safeError(error),
+          : describeError(error),
       })
     }
   },
   currentSessionOnly,
 )
-export const sendMessage = scoped(sendMessageOperation)
 
-const retryOperation = createOperation<void, SessionScope & { key: string }>(
+export const retrySend = createOperation<void, SessionScope & { key: string }>(
   'chats/retry',
   async (arg, api) => {
     const message = Object.values(api.getState().chats.messagesByChat)
@@ -283,4 +212,3 @@ const retryOperation = createOperation<void, SessionScope & { key: string }>(
   },
   currentSessionOnly,
 )
-export const retrySend = scoped(retryOperation)

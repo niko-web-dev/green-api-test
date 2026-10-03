@@ -1,9 +1,9 @@
-import { createSlice } from '@reduxjs/toolkit'
+import { createSlice, createSelector, isAnyOf } from '@reduxjs/toolkit'
 import type { PayloadAction } from '@reduxjs/toolkit'
 import type { IncomingText } from '../notifications'
 import { sessionStarted, loggedOut } from './sessionSlice'
-import type { SessionScope } from './types'
-import type { openChatOperation, sendMessageOperation } from './thunks'
+import type { SessionScope, StoreState } from './types'
+import type { openChat, sendMessage } from './thunks'
 
 export interface Chat {
   chatId: string
@@ -24,9 +24,8 @@ export interface Message {
 }
 
 export interface ChatsState {
-  sessionId: number
   byId: Record<string, Chat>
-  order: string[]
+  openRequestId: string | null
   activeChatId: string | null
   messagesByChat: Record<string, Message[]>
   seenMessageIds: Record<string, true>
@@ -34,19 +33,12 @@ export interface ChatsState {
 }
 
 const initialState: ChatsState = {
-  sessionId: 0,
   byId: {},
-  order: [],
+  openRequestId: null,
   activeChatId: null,
   messagesByChat: {},
   seenMessageIds: {},
   error: null,
-}
-
-function sortChats(state: ChatsState) {
-  state.order = Object.values(state.byId)
-    .sort((a, b) => b.lastActivity - a.lastActivity)
-    .map((chat) => chat.chatId)
 }
 
 const slice = createSlice({
@@ -58,11 +50,7 @@ const slice = createSlice({
       action: PayloadAction<SessionScope & IncomingText>,
     ) {
       const p = action.payload
-      if (
-        p.sessionId !== state.sessionId ||
-        Object.hasOwn(state.seenMessageIds, p.idMessage)
-      )
-        return
+      if (Object.hasOwn(state.seenMessageIds, p.idMessage)) return
       state.seenMessageIds[p.idMessage] = true
       state.byId[p.chatId] ??= {
         chatId: p.chatId,
@@ -82,7 +70,6 @@ const slice = createSlice({
         status: 'sent',
       })
       messages.sort((a, b) => a.timestamp - b.timestamp)
-      sortChats(state)
     },
     outgoingStarted(
       state,
@@ -90,7 +77,6 @@ const slice = createSlice({
         SessionScope & { message: Message; retryKey?: string }
       >,
     ) {
-      if (action.payload.sessionId !== state.sessionId) return
       const { message, retryKey } = action.payload
       const messages = (state.messagesByChat[message.chatId] ??= [])
       const previous = retryKey
@@ -103,68 +89,67 @@ const slice = createSlice({
       if (chat)
         chat.lastActivity = Math.max(chat.lastActivity, message.timestamp)
       state.error = null
-      sortChats(state)
     },
   },
   extraReducers: (builder) => {
-    builder.addCase(sessionStarted, (state) => ({
-      ...initialState,
-      sessionId: state.sessionId + 1,
-    }))
-    builder.addCase(loggedOut, (state) => ({
-      ...initialState,
-      sessionId: state.sessionId + 1,
-    }))
+    builder.addMatcher(isAnyOf(sessionStarted, loggedOut), () => initialState)
     builder.addMatcher(
-      (action): action is ReturnType<typeof openChatOperation.fulfilled> =>
+      (action): action is ReturnType<typeof openChat.pending> =>
+        action.type === 'chats/open/pending',
+      (state, action) => {
+        state.openRequestId = action.meta.requestId
+        state.error = null
+      },
+    )
+    builder.addMatcher(
+      (action): action is ReturnType<typeof openChat.fulfilled> =>
         action.type === 'chats/open/fulfilled',
       (state, action) => {
-        if (action.meta.arg.sessionId !== state.sessionId) return
+        if (state.openRequestId !== action.meta.requestId) return
+        state.openRequestId = null
         const chat = action.payload
         const existing = state.byId[chat.chatId]
         if (existing) existing.phone = chat.phone
         else state.byId[chat.chatId] = chat
         state.activeChatId = chat.chatId
         state.error = null
-        sortChats(state)
       },
     )
     builder.addMatcher(
-      (action): action is ReturnType<typeof sendMessageOperation.fulfilled> =>
+      (action): action is ReturnType<typeof sendMessage.fulfilled> =>
         action.type === 'chats/send/fulfilled',
       (state, action) => {
-        if (action.meta.arg.sessionId !== state.sessionId) return
         const { chatId, key, idMessage } = action.payload
         const message = state.messagesByChat[chatId]?.find((m) => m.key === key)
         if (!message) return
         message.status = 'sent'
         message.idMessage = idMessage
         delete message.error
-        state.seenMessageIds[idMessage] = true
       },
     )
     builder.addMatcher(
-      (action): action is ReturnType<typeof sendMessageOperation.rejected> =>
+      (action): action is ReturnType<typeof sendMessage.rejected> =>
         action.type === 'chats/send/rejected',
       (state, action) => {
-        if (action.meta.arg.sessionId !== state.sessionId) return
         const message = state.messagesByChat[action.meta.arg.chatId]?.find(
           (m) => m.key === (action.meta.arg.retryKey ?? action.meta.requestId),
         )
-        if (message && message.status === 'sending') {
-          message.status = action.payload?.status ?? 'unknown'
-          message.error =
-            action.payload?.error ?? 'Не удалось подтвердить отправку.'
-        }
-        state.error =
+        const error =
           action.payload?.error ?? 'Не удалось подтвердить отправку.'
+        if (message?.status === 'sending') {
+          message.status = action.payload?.status ?? 'unknown'
+          message.error = error
+        } else if (!message) {
+          state.error = error
+        }
       },
     )
     builder.addMatcher(
-      (action): action is ReturnType<typeof openChatOperation.rejected> =>
+      (action): action is ReturnType<typeof openChat.rejected> =>
         action.type === 'chats/open/rejected',
       (state, action) => {
-        if (action.meta.arg.sessionId !== state.sessionId) return
+        if (state.openRequestId !== action.meta.requestId) return
+        state.openRequestId = null
         state.error = action.payload ?? 'Не удалось открыть чат.'
       },
     )
@@ -173,3 +158,8 @@ const slice = createSlice({
 
 export const { incomingReceived, outgoingStarted } = slice.actions
 export default slice.reducer
+
+export const selectChatList = createSelector(
+  [(state: StoreState) => state.chats.byId],
+  (byId) => Object.values(byId).sort((a, b) => b.lastActivity - a.lastActivity),
+)

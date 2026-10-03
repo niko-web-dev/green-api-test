@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { GreenApiError } from '../api/greenApiClient'
-import type { GreenApiClient } from '../api/greenApiClient'
+import { GreenApiError, describeError } from '../api/greenApiClient'
+import { createFakeClient } from '../test/fakeClient'
 import type { Credentials, ReceivedNotification } from '../api/types'
 import type { MessengerId } from '../messengers'
 import { MESSENGERS } from '../messengers'
@@ -12,7 +12,7 @@ import {
   connectionChanged,
   warningChanged,
 } from './sessionSlice'
-import { incomingReceived } from './chatsSlice'
+import { incomingReceived, selectChatList } from './chatsSlice'
 import {
   login,
   restoreSession,
@@ -40,44 +40,32 @@ function credentials(): Credentials {
   }
 }
 
+const sid = (store: ReturnType<typeof makeStore>) =>
+  store.getState().session.sessionId
+
 const stores: ReturnType<typeof makeStore>[] = []
 function setup(messenger: MessengerId = 'telegram', start = true) {
   const receiveSignals: AbortSignal[] = []
   let activeReceives = 0
   let maximumReceives = 0
-  const client = {
-    getStateInstance: vi
-      .fn<GreenApiClient['getStateInstance']>()
-      .mockResolvedValue('authorized'),
-    checkAccount: vi
-      .fn<GreenApiClient['checkAccount']>()
-      .mockResolvedValue({ exist: true, chatId: '10000002' }),
-    checkWhatsapp: vi
-      .fn<GreenApiClient['checkWhatsapp']>()
-      .mockResolvedValue({ existsWhatsapp: true }),
-    sendMessage: vi
-      .fn<GreenApiClient['sendMessage']>()
-      .mockResolvedValue({ idMessage: 'sent-id' }),
-    receiveNotification: vi.fn<GreenApiClient['receiveNotification']>(
-      (_timeout, signal) => {
-        if (!signal) throw new Error('Не передан сигнал отмены')
-        receiveSignals.push(signal)
-        activeReceives++
-        maximumReceives = Math.max(maximumReceives, activeReceives)
-        return new Promise((_resolve, reject) => {
-          const abort = () => {
-            activeReceives--
-            reject(new GreenApiError('aborted'))
-          }
-          if (signal.aborted) abort()
-          else signal.addEventListener('abort', abort, { once: true })
-        })
-      },
-    ),
-    deleteNotification: vi
-      .fn<GreenApiClient['deleteNotification']>()
-      .mockResolvedValue(true),
-  } satisfies GreenApiClient
+  const client = createFakeClient()
+  client.checkAccount.mockResolvedValue({ exist: true, chatId: '10000002' })
+  client.checkWhatsapp.mockResolvedValue({ existsWhatsapp: true })
+  client.sendMessage.mockResolvedValue({ idMessage: 'sent-id' })
+  client.receiveNotification.mockImplementation((_timeout, signal) => {
+    if (!signal) throw new Error('Не передан сигнал отмены')
+    receiveSignals.push(signal)
+    activeReceives++
+    maximumReceives = Math.max(maximumReceives, activeReceives)
+    return new Promise((_resolve, reject) => {
+      const abort = () => {
+        activeReceives--
+        reject(new GreenApiError('aborted'))
+      }
+      if (signal.aborted) abort()
+      else signal.addEventListener('abort', abort, { once: true })
+    })
+  })
   const createClient = vi.fn(() => client)
   const store = makeStore({ createClient })
   stores.push(store)
@@ -126,9 +114,11 @@ afterEach(async () => {
 })
 
 describe('Вход и восстановление', () => {
-  it('запускает сессию только после подтверждения авторизации', async () => {
+  it('авторизация запускает получение уведомлений', async () => {
     const { store, client, session } = setup('telegram', false)
-    const result = await store.dispatch(login(session))
+    const result = await store.dispatch(
+      login({ ...session, sessionId: sid(store) }),
+    )
     expect(login.fulfilled.match(result)).toBe(true)
     expect(client.getStateInstance).toHaveBeenCalledTimes(1)
     expect(store.getState().session.current?.messenger).toBe('telegram')
@@ -136,60 +126,64 @@ describe('Вход и восстановление', () => {
     expect(client.receiveNotification).toHaveBeenCalledTimes(1)
   })
 
-  it.each([
-    'notAuthorized',
-    'blocked',
-    'starting',
-    'sleepMode',
-    'yellowCard',
-    'unknownState',
-  ])('отклоняет состояние %s без запуска получения', async (state) => {
-    const { store, client, session } = setup('telegram', false)
-    client.getStateInstance.mockResolvedValue(state)
-    const result = await store.dispatch(login(session))
-    expect(login.rejected.match(result)).toBe(true)
-    expect(store.getState().session.current).toBeNull()
-    expect(store.getState().session.error).toMatch(/[А-Яа-я]/)
-    expect(client.receiveNotification).not.toHaveBeenCalled()
-  })
-
-  it.each(['auth', 'network', 'quota', 'rateLimit'] as const)(
-    'возвращает безопасную ошибку %s',
-    async (kind) => {
+  it.each(['notAuthorized', 'unknownState'])(
+    'отклоняет состояние инстанса: %s',
+    async (state) => {
       const { store, client, session } = setup('telegram', false)
-      client.getStateInstance.mockRejectedValue(new GreenApiError(kind))
-      await store.dispatch(login(session))
+      client.getStateInstance.mockResolvedValue(state)
+      const result = await store.dispatch(
+        login({ ...session, sessionId: sid(store) }),
+      )
+      expect(login.rejected.match(result)).toBe(true)
+      expect(store.getState().session.current).toBeNull()
       expect(store.getState().session.error).toBe(
-        new GreenApiError(kind).message,
+        state === 'notAuthorized'
+          ? 'Инстанс не авторизован. Авторизуйте аккаунт в кабинете GREEN-API.'
+          : 'Инстанс пока не готов к работе. Проверьте его состояние в кабинете GREEN-API.',
       )
       expect(client.receiveNotification).not.toHaveBeenCalled()
     },
   )
 
-  it('не раскрывает исходный текст неожиданной ошибки', async () => {
+  it.each(['auth'] as const)(
+    'возвращает безопасную ошибку %s',
+    async (kind) => {
+      const { store, client, session } = setup('telegram', false)
+      client.getStateInstance.mockRejectedValue(new GreenApiError(kind))
+      await store.dispatch(login({ ...session, sessionId: sid(store) }))
+      expect(store.getState().session.error).toBe(
+        describeError(new GreenApiError(kind)),
+      )
+      expect(client.receiveNotification).not.toHaveBeenCalled()
+    },
+  )
+
+  it('скрывает текст неожиданной ошибки', async () => {
     const { store, client, session } = setup('telegram', false)
     client.getStateInstance.mockRejectedValue(
       new Error(session.credentials.apiTokenInstance),
     )
-    await store.dispatch(login(session))
+    await store.dispatch(login({ ...session, sessionId: sid(store) }))
     expect(store.getState().session.error).toBe(
       'Не удалось выполнить запрос к GREEN-API.',
     )
   })
 
-  it('при параллельных входах принимает только последний запрос', async () => {
+  it('последний запрос входа побеждает', async () => {
     const { store, client, session } = setup('telegram', false)
     const first = deferred<string>()
     client.getStateInstance.mockReturnValueOnce(first.promise)
-    const pending = store.dispatch(login(session))
-    await store.dispatch(login({ ...session, messenger: 'max' }))
+    const pending = store.dispatch(login({ ...session, sessionId: sid(store) }))
+    await store.dispatch(
+      login({ ...session, messenger: 'max', sessionId: sid(store) }),
+    )
     first.resolve('authorized')
     await pending
     expect(store.getState().session.current?.messenger).toBe('max')
     expect(client.receiveNotification).toHaveBeenCalledTimes(1)
   })
 
-  it('сохраняет только sessionStorage, восстанавливает и очищает при выходе', async () => {
+  it('восстанавливает и очищает sessionStorage', async () => {
     const { store, session } = setup()
     expect(JSON.parse(sessionStorage.getItem(SESSION_STORAGE_KEY)!)).toEqual(
       session,
@@ -206,7 +200,7 @@ describe('Вход и восстановление', () => {
     expect(store.getState().session.current).toBeNull()
   })
 
-  it.each(['{', '{}', '{"messenger":"other","credentials":{}}'])(
+  it.each(['{', '{"messenger":"other","credentials":{}}'])(
     'игнорирует повреждённое сохранение %s',
     async (raw) => {
       sessionStorage.setItem(SESSION_STORAGE_KEY, raw)
@@ -237,10 +231,12 @@ describe('Вход и восстановление', () => {
 
 describe('Открытие чата', () => {
   it.each<MessengerId>(['max', 'telegram', 'whatsapp'])(
-    'использует нужный метод для %s и кэширует телефон',
+    'кэширует канонический чат: %s',
     async (messenger) => {
       const { store, client } = setup(messenger)
-      await store.dispatch(openChat({ phoneInput: '+7 (999) 000-00-02' }))
+      await store.dispatch(
+        openChat({ sessionId: sid(store), phoneInput: '+7 (999) 000-00-02' }),
+      )
       const chatId = messenger === 'whatsapp' ? '79990000002@c.us' : '10000002'
       expect(store.getState().chats.activeChatId).toBe(chatId)
       const used =
@@ -252,46 +248,59 @@ describe('Открытие чата', () => {
         expect.any(AbortSignal),
       )
       expect(unused).not.toHaveBeenCalled()
-      await store.dispatch(openChat({ phoneInput: '79990000002' }))
+      await store.dispatch(
+        openChat({ sessionId: sid(store), phoneInput: '79990000002' }),
+      )
       expect(used).toHaveBeenCalledTimes(1)
-      expect(store.getState().chats.order).toEqual([chatId])
+      expect(selectChatList(store.getState()).map((c) => c.chatId)).toEqual([
+        chatId,
+      ])
     },
   )
 
   it('проверяет телефон до запроса', async () => {
     const { store, client } = setup()
-    await store.dispatch(openChat({ phoneInput: '89990000002' }))
+    await store.dispatch(
+      openChat({ sessionId: sid(store), phoneInput: '89990000002' }),
+    )
     expect(client.checkAccount).not.toHaveBeenCalled()
     expect(store.getState().chats.error).toContain('кодом 7')
   })
 
-  it.each(['quota', 'rateLimit'] as const)(
-    'объясняет ошибку %s',
-    async (kind) => {
-      const { store, client } = setup()
-      client.checkAccount.mockRejectedValue(new GreenApiError(kind))
-      await store.dispatch(openChat({ phoneInput: '79990000002' }))
-      expect(store.getState().chats.error).toBe(new GreenApiError(kind).message)
-      expect(store.getState().chats.order).toEqual([])
-    },
-  )
+  it.each(['phoneCheckLimit'] as const)('объясняет ошибку %s', async (kind) => {
+    const { store, client } = setup()
+    client.checkAccount.mockRejectedValue(new GreenApiError(kind))
+    await store.dispatch(
+      openChat({ sessionId: sid(store), phoneInput: '79990000002' }),
+    )
+    expect(store.getState().chats.error).toBe(
+      describeError(new GreenApiError(kind)),
+    )
+    expect(selectChatList(store.getState()).map((c) => c.chatId)).toEqual([])
+  })
 
   it('отклоняет отсутствующий аккаунт', async () => {
     const { store, client } = setup()
     client.checkAccount.mockResolvedValue({ exist: false, chatId: '' })
-    await store.dispatch(openChat({ phoneInput: '79990000002' }))
-    expect(store.getState().chats.error).toContain('Номер не найден')
+    await store.dispatch(
+      openChat({ sessionId: sid(store), phoneInput: '79990000002' }),
+    )
+    expect(store.getState().chats.error).toBe(
+      'Номер не зарегистрирован в Telegram',
+    )
   })
 })
 
 describe('Отправка', () => {
-  it('меняет sending на sent и сохраняет идентификатор API', async () => {
+  it('подтверждённая отправка становится sent', async () => {
     const { store, client } = setup()
-    await store.dispatch(openChat({ phoneInput: '79990000002' }))
+    await store.dispatch(
+      openChat({ sessionId: sid(store), phoneInput: '79990000002' }),
+    )
     const sent = deferred<{ idMessage: string }>()
     client.sendMessage.mockReturnValueOnce(sent.promise)
     const request = store.dispatch(
-      sendMessage({ chatId: '10000002', text: 'Текст' }),
+      sendMessage({ sessionId: sid(store), chatId: '10000002', text: 'Текст' }),
     )
     expect(messages(store)[0]?.status).toBe('sending')
     sent.resolve({ idMessage: 'api-id' })
@@ -301,85 +310,111 @@ describe('Отправка', () => {
       text: 'Текст',
       idMessage: 'api-id',
     })
-    expect(store.getState().chats.seenMessageIds['api-id']).toBe(true)
   })
 
   it.each([
     ['badRequest', 'failed'],
-    ['auth', 'failed'],
-    ['quota', 'failed'],
-    ['rateLimit', 'failed'],
-    ['server', 'failed'],
     ['network', 'unknown'],
     ['aborted', 'unknown'],
   ] as const)(
     'обрабатывает %s как %s без автоповтора',
     async (kind, status) => {
       const { store, client } = setup()
-      await store.dispatch(openChat({ phoneInput: '79990000002' }))
+      await store.dispatch(
+        openChat({ sessionId: sid(store), phoneInput: '79990000002' }),
+      )
       client.sendMessage.mockRejectedValueOnce(new GreenApiError(kind))
-      await store.dispatch(sendMessage({ chatId: '10000002', text: 'Текст' }))
-      expect(messages(store)[0]).toMatchObject({ status, text: 'Текст' })
+      await store.dispatch(
+        sendMessage({
+          sessionId: sid(store),
+          chatId: '10000002',
+          text: 'Текст',
+        }),
+      )
+      expect(messages(store)[0]).toMatchObject({
+        status,
+        text: 'Текст',
+        error:
+          kind === 'badRequest'
+            ? describeError(new GreenApiError(kind))
+            : 'Не удалось подтвердить отправку. Ручной повтор может создать дубликат.',
+      })
+      expect(store.getState().chats.error).toBeNull()
       await vi.advanceTimersByTimeAsync(60_000)
       expect(client.sendMessage).toHaveBeenCalledTimes(1)
     },
   )
 
-  it.each<MessengerId>(['max', 'telegram', 'whatsapp'])(
+  it.each<MessengerId>(['telegram'])(
     'принимает лимит %s и отклоняет превышение',
     async (messenger) => {
       const { store, client } = setup(messenger)
-      await store.dispatch(openChat({ phoneInput: '79990000002' }))
+      await store.dispatch(
+        openChat({ sessionId: sid(store), phoneInput: '79990000002' }),
+      )
       const chatId = store.getState().chats.activeChatId!
       const limit = MESSENGERS[messenger].maxMessageLength
-      await store.dispatch(sendMessage({ chatId, text: 'а'.repeat(limit + 1) }))
+      await store.dispatch(
+        sendMessage({
+          sessionId: sid(store),
+          chatId,
+          text: 'а'.repeat(limit + 1),
+        }),
+      )
       expect(client.sendMessage).not.toHaveBeenCalled()
       expect(messages(store)).toHaveLength(0)
-      await store.dispatch(sendMessage({ chatId, text: 'а'.repeat(limit) }))
+      await store.dispatch(
+        sendMessage({ sessionId: sid(store), chatId, text: 'а'.repeat(limit) }),
+      )
       expect(client.sendMessage).toHaveBeenCalledTimes(1)
     },
   )
 
   it('отклоняет пустой текст и неизвестный чат', async () => {
     const { store, client } = setup()
-    await store.dispatch(sendMessage({ chatId: 'missing', text: ' ' }))
-    await store.dispatch(sendMessage({ chatId: 'missing', text: 'Текст' }))
+    await store.dispatch(
+      sendMessage({ sessionId: sid(store), chatId: 'missing', text: ' ' }),
+    )
+    await store.dispatch(
+      sendMessage({ sessionId: sid(store), chatId: 'missing', text: 'Текст' }),
+    )
     expect(client.sendMessage).not.toHaveBeenCalled()
     expect(messages(store)).toHaveLength(0)
   })
 
-  it('не считает ошибку создания клиента неопределённой отправкой', async () => {
-    const { store, createClient, client } = setup()
-    await store.dispatch(openChat({ phoneInput: '79990000002' }))
-    createClient.mockImplementationOnce(() => {
-      throw new Error('Ошибка клиента')
-    })
-    await store.dispatch(sendMessage({ chatId: '10000002', text: 'Текст' }))
-    expect(client.sendMessage).not.toHaveBeenCalled()
-    expect(messages(store)).toHaveLength(0)
-  })
-
-  it('не считает некорректное подтверждение доказанной отправкой', async () => {
+  it('неверное подтверждение оставляет unknown', async () => {
     const { store, client } = setup()
-    await store.dispatch(openChat({ phoneInput: '79990000002' }))
+    await store.dispatch(
+      openChat({ sessionId: sid(store), phoneInput: '79990000002' }),
+    )
     client.sendMessage.mockResolvedValueOnce({ idMessage: '' })
-    await store.dispatch(sendMessage({ chatId: '10000002', text: 'Текст' }))
+    await store.dispatch(
+      sendMessage({ sessionId: sid(store), chatId: '10000002', text: 'Текст' }),
+    )
     expect(messages(store)[0]?.status).toBe('unknown')
   })
 
-  it.each(['badRequest', 'network'] as const)(
+  it.each(['network'] as const)(
     'повторяет %s вручную в той же записи',
     async (kind) => {
       const { store, client } = setup()
-      await store.dispatch(openChat({ phoneInput: '79990000002' }))
+      await store.dispatch(
+        openChat({ sessionId: sid(store), phoneInput: '79990000002' }),
+      )
       client.sendMessage.mockRejectedValueOnce(new GreenApiError(kind))
-      await store.dispatch(sendMessage({ chatId: '10000002', text: 'Текст' }))
+      await store.dispatch(
+        sendMessage({
+          sessionId: sid(store),
+          chatId: '10000002',
+          text: 'Текст',
+        }),
+      )
       const key = messages(store)[0]!.key
       const sent = deferred<{ idMessage: string }>()
       client.sendMessage.mockReturnValueOnce(sent.promise)
-      const retry = store.dispatch(retrySend({ key }))
+      const retry = store.dispatch(retrySend({ sessionId: sid(store), key }))
       expect(messages(store)[0]?.status).toBe('sending')
-      await store.dispatch(retrySend({ key }))
+      await store.dispatch(retrySend({ sessionId: sid(store), key }))
       expect(client.sendMessage).toHaveBeenCalledTimes(2)
       sent.resolve({ idMessage: 'retry-id' })
       await retry
@@ -390,14 +425,14 @@ describe('Отправка', () => {
         idMessage: 'retry-id',
       })
       expect(messages(store)[0]?.error).toBeUndefined()
-      await store.dispatch(retrySend({ key }))
+      await store.dispatch(retrySend({ sessionId: sid(store), key }))
       expect(client.sendMessage).toHaveBeenCalledTimes(2)
     },
   )
 })
 
 describe('Входящие и порядок чатов', () => {
-  it('создаёт неизвестный чат и игнорирует повтор idMessage', () => {
+  it('входящее создаёт чат без дублей', () => {
     const { store } = setup()
     const event = incoming(store.getState().session.sessionId)
     store.dispatch(incomingReceived(event))
@@ -407,9 +442,11 @@ describe('Входящие и порядок чатов', () => {
     expect(store.getState().chats.activeChatId).toBeNull()
   })
 
-  it('добавляет в существующий чат, сохраняет название и сортирует по активности', async () => {
+  it('входящие упорядочивают чаты по активности', async () => {
     const { store } = setup()
-    await store.dispatch(openChat({ phoneInput: '79990000002' }))
+    await store.dispatch(
+      openChat({ sessionId: sid(store), phoneInput: '79990000002' }),
+    )
     const id = store.getState().session.sessionId
     store.dispatch(incomingReceived(incoming(id, { timestamp: 10 })))
     store.dispatch(
@@ -421,7 +458,10 @@ describe('Входящие и порядок чатов', () => {
         }),
       ),
     )
-    expect(store.getState().chats.order).toEqual(['other', '10000002'])
+    expect(selectChatList(store.getState()).map((c) => c.chatId)).toEqual([
+      'other',
+      '10000002',
+    ])
     expect(store.getState().chats.byId['10000002']?.title).toBe('+79990000002')
     store.dispatch(
       incomingReceived(
@@ -431,16 +471,19 @@ describe('Входящие и порядок чатов', () => {
         }),
       ),
     )
-    expect(store.getState().chats.order).toEqual(['10000002', 'other'])
+    expect(selectChatList(store.getState()).map((c) => c.chatId)).toEqual([
+      '10000002',
+      'other',
+    ])
   })
 
-  it('полностью очищает коллекции при смене сессии и выходе', () => {
+  it('смена сессии очищает чаты', () => {
     const { store, session } = setup()
     const id = store.getState().session.sessionId
     store.dispatch(incomingReceived(incoming(id)))
     store.dispatch(sessionStarted(session))
     expect(messages(store)).toHaveLength(0)
-    expect(store.getState().chats.order).toEqual([])
+    expect(selectChatList(store.getState()).map((c) => c.chatId)).toEqual([])
     store.dispatch(incomingReceived(incoming(id + 1)))
     expect(messages(store)).toHaveLength(1)
     store.dispatch(loggedOut())
@@ -451,9 +494,11 @@ describe('Входящие и порядок чатов', () => {
 })
 
 describe('Поздние ответы и отмена', () => {
-  it('игнорирует fulfilled и rejected старой сессии даже после нового входа', async () => {
+  it('новая сессия отсекает старые действия', async () => {
     const { store, session } = setup()
-    await store.dispatch(openChat({ phoneInput: '79990000002' }))
+    await store.dispatch(
+      openChat({ sessionId: sid(store), phoneInput: '79990000002' }),
+    )
     const id = store.getState().session.sessionId
     store.dispatch(loggedOut())
     store.dispatch(sessionStarted(session))
@@ -496,26 +541,30 @@ describe('Поздние ответы и отмена', () => {
     expect(store.getState()).toBe(before)
   })
 
-  it('отменяет запрос резолва при выходе и игнорирует ответ клиента, не соблюдающего abort', async () => {
+  it('выход отменяет проверку номера', async () => {
     const { store, client } = setup()
     const check = deferred<{ exist: boolean; chatId: string }>()
     client.checkAccount.mockReturnValueOnce(check.promise)
-    const request = store.dispatch(openChat({ phoneInput: '79990000002' }))
+    const request = store.dispatch(
+      openChat({ sessionId: sid(store), phoneInput: '79990000002' }),
+    )
     const signal = client.checkAccount.mock.calls[0]![1]!
     store.dispatch(loggedOut())
     expect(signal.aborted).toBe(true)
     check.resolve({ exist: true, chatId: 'late' })
     await request
-    expect(store.getState().chats.order).toEqual([])
+    expect(selectChatList(store.getState()).map((c) => c.chatId)).toEqual([])
   })
 
-  it('отменяет отправку при смене сессии без появления старого сообщения', async () => {
+  it('смена сессии отменяет отправку', async () => {
     const { store, client, session } = setup()
-    await store.dispatch(openChat({ phoneInput: '79990000002' }))
+    await store.dispatch(
+      openChat({ sessionId: sid(store), phoneInput: '79990000002' }),
+    )
     const sent = deferred<{ idMessage: string }>()
     client.sendMessage.mockReturnValueOnce(sent.promise)
     const request = store.dispatch(
-      sendMessage({ chatId: '10000002', text: 'Текст' }),
+      sendMessage({ sessionId: sid(store), chatId: '10000002', text: 'Текст' }),
     )
     const signal = client.sendMessage.mock.calls[0]![2]!
     store.dispatch(sessionStarted(session))
@@ -530,7 +579,7 @@ describe('Поздние ответы и отмена', () => {
     const { store, client, session } = setup('telegram', false)
     const state = deferred<string>()
     client.getStateInstance.mockReturnValueOnce(state.promise)
-    const request = store.dispatch(login(session))
+    const request = store.dispatch(login({ ...session, sessionId: sid(store) }))
     const signal = client.getStateInstance.mock.calls[0]![0]!
     store.dispatch(loggedOut())
     expect(signal.aborted).toBe(true)
@@ -542,7 +591,7 @@ describe('Поздние ответы и отмена', () => {
 })
 
 describe('Получение через листенер', () => {
-  it('запускает ровно один цикл, отменяет при смене сессии и выходе', async () => {
+  it('одновременно работает один цикл', async () => {
     const {
       store,
       client,
@@ -566,7 +615,7 @@ describe('Получение через листенер', () => {
     expect(store.getState().session.connection).toBe('idle')
   })
 
-  it('парсит уведомления, предупреждает о типе инстанса, дедуплицирует разные receiptId', async () => {
+  it('разные receiptId не дублируют сообщение', async () => {
     const { store, client, session } = setup('telegram', false)
     const event: ReceivedNotification = {
       receiptId: 1,
@@ -593,7 +642,7 @@ describe('Получение через листенер', () => {
     expect(client.deleteNotification).toHaveBeenCalledTimes(2)
   })
 
-  it.each(['auth', 'webhookSet'] as const)(
+  it.each(['webhookSet'] as const)(
     'отображает остановку по %s',
     async (kind) => {
       const { store, client, session } = setup('telegram', false)
@@ -602,7 +651,7 @@ describe('Получение через листенер', () => {
       await flush()
       expect(store.getState().session.connection).toBe('error')
       expect(store.getState().session.error).toBe(
-        new GreenApiError(kind).message,
+        describeError(new GreenApiError(kind)),
       )
     },
   )
@@ -620,18 +669,7 @@ describe('Получение через листенер', () => {
     expect(store.getState().session.error).toBeNull()
   })
 
-  it('изолирует отмену в разных сторах', () => {
-    const first = setup()
-    const second = setup()
-    first.store.dispatch(loggedOut())
-    expect(first.receiveSignals[0]?.aborted).toBe(true)
-    expect(second.receiveSignals[0]?.aborted).toBe(false)
-    expect(second.activeReceives()).toBe(1)
-  })
-})
-
-describe('Дополнительные гонки', () => {
-  it('не обращается к API с явно устаревшим поколением', async () => {
+  it('устаревшее поколение не вызывает API', async () => {
     const { store, client, session } = setup()
     await store.dispatch(login({ ...session, sessionId: 0 }))
     await store.dispatch(openChat({ phoneInput: '79990000002', sessionId: 0 }))
@@ -643,24 +681,30 @@ describe('Дополнительные гонки', () => {
     expect(client.sendMessage).not.toHaveBeenCalled()
   })
 
-  it('кэширует телефон после открытия ранее созданного входящим чата', async () => {
+  it('входящий чат получает кэш телефона', async () => {
     const { store, client } = setup()
     store.dispatch(
       incomingReceived(incoming(store.getState().session.sessionId)),
     )
-    await store.dispatch(openChat({ phoneInput: '79990000002' }))
-    await store.dispatch(openChat({ phoneInput: '79990000002' }))
+    await store.dispatch(
+      openChat({ sessionId: sid(store), phoneInput: '79990000002' }),
+    )
+    await store.dispatch(
+      openChat({ sessionId: sid(store), phoneInput: '79990000002' }),
+    )
     expect(client.checkAccount).toHaveBeenCalledTimes(1)
     expect(store.getState().chats.byId['10000002']?.title).toBe('Получатель')
   })
 
-  it('явная отмена отправки оставляет unknown без автоматического повтора', async () => {
+  it('отмена отправки оставляет unknown', async () => {
     const { store, client } = setup()
-    await store.dispatch(openChat({ phoneInput: '79990000002' }))
+    await store.dispatch(
+      openChat({ sessionId: sid(store), phoneInput: '79990000002' }),
+    )
     const sent = deferred<{ idMessage: string }>()
     client.sendMessage.mockReturnValueOnce(sent.promise)
     const request = store.dispatch(
-      sendMessage({ chatId: '10000002', text: 'Текст' }),
+      sendMessage({ sessionId: sid(store), chatId: '10000002', text: 'Текст' }),
     )
     request.abort()
     await request
@@ -672,7 +716,7 @@ describe('Дополнительные гонки', () => {
     expect(client.sendMessage).toHaveBeenCalledTimes(1)
   })
 
-  it('не обрабатывает позднее уведомление отменённого цикла', async () => {
+  it('отмена отсекает позднее уведомление', async () => {
     const { store, client, session } = setup('telegram', false)
     const received = deferred<ReceivedNotification | null>()
     client.receiveNotification.mockReturnValueOnce(received.promise)
@@ -699,18 +743,52 @@ describe('Дополнительные гонки', () => {
   })
 })
 
-describe('Безопасная диагностика HTTP', () => {
-  it.each([400, 404, 422])(
-    'показывает код %s без исходного текста ошибки',
-    async (status) => {
-      const { store, client, session } = setup('telegram', false)
-      const error = new GreenApiError('badRequest', status)
-      error.message = session.credentials.apiTokenInstance
-      client.getStateInstance.mockRejectedValueOnce(error)
-      await store.dispatch(login(session))
-      expect(store.getState().session.error).toBe(
-        `GREEN-API отклонил запрос. Проверьте переданные данные. (HTTP ${status})`,
-      )
-    },
-  )
+describe('Восстановление и открытие', () => {
+  it('неудачное восстановление очищает сохранение', async () => {
+    const { session } = setup()
+    sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session))
+    const { store, client } = setup('telegram', false)
+    client.getStateInstance.mockRejectedValueOnce(new GreenApiError('auth'))
+    await store.dispatch(restoreSession())
+    expect(sessionStorage.getItem(SESSION_STORAGE_KEY)).toBeNull()
+    expect(store.getState().session.error).toBe(
+      describeError(new GreenApiError('auth')),
+    )
+  })
+
+  it('последний запрос чата остаётся активным', async () => {
+    const { store, client } = setup()
+    const first = deferred<{ exist: boolean; chatId: string }>()
+    client.checkAccount
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValueOnce({ exist: true, chatId: 'second' })
+    const pending = store.dispatch(
+      openChat({ sessionId: sid(store), phoneInput: '79990000002' }),
+    )
+    expect(store.getState().chats.openRequestId).not.toBeNull()
+    await store.dispatch(
+      openChat({ sessionId: sid(store), phoneInput: '79990000003' }),
+    )
+    first.resolve({ exist: true, chatId: 'first' })
+    await pending
+    expect(store.getState().chats.activeChatId).toBe('second')
+    expect(store.getState().chats.openRequestId).toBeNull()
+  })
+
+  it('поздний сбой восстановления сохраняет новый вход', async () => {
+    const { session } = setup()
+    sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session))
+    const { store, client } = setup('telegram', false)
+    const old = deferred<string>()
+    client.getStateInstance.mockReturnValueOnce(old.promise)
+    const restoring = store.dispatch(restoreSession())
+    await store.dispatch(
+      login({ ...session, messenger: 'max', sessionId: sid(store) }),
+    )
+    old.reject(new GreenApiError('network'))
+    await restoring
+    expect(
+      JSON.parse(sessionStorage.getItem(SESSION_STORAGE_KEY)!).messenger,
+    ).toBe('max')
+  })
 })

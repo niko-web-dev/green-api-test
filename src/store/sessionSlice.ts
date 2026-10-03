@@ -1,9 +1,10 @@
 import { createSlice } from '@reduxjs/toolkit'
 import type { PayloadAction } from '@reduxjs/toolkit'
 import type { Credentials } from '../api/types'
+import { MESSENGERS } from '../messengers'
 import type { MessengerId } from '../messengers'
-import type { SessionScope } from './types'
-import type { loginOperation } from './thunks'
+import type { SessionScope, StoreState } from './types'
+import type { login } from './thunks'
 
 export interface Session {
   messenger: MessengerId
@@ -42,33 +43,27 @@ export function saveSession(session: Session | null): void {
 
 export function readSession(): Session | null {
   try {
-    const raw = sessionStorage.getItem(SESSION_STORAGE_KEY)
-    if (!raw) return null
-    const value: unknown = JSON.parse(raw)
-    if (
-      !value ||
-      typeof value !== 'object' ||
-      !('messenger' in value) ||
-      !['max', 'telegram', 'whatsapp'].includes(String(value.messenger)) ||
-      !('credentials' in value)
-    )
-      return null
-    const c = value.credentials
+    const v = JSON.parse(
+      sessionStorage.getItem(SESSION_STORAGE_KEY) ?? 'null',
+    ) as Partial<Session> | null
+    const c = v?.credentials
+    const fields = [c?.apiUrl, c?.idInstance, c?.apiTokenInstance]
     if (
       !c ||
-      typeof c !== 'object' ||
-      !('apiUrl' in c) ||
-      typeof c.apiUrl !== 'string' ||
-      !c.apiUrl ||
-      !('idInstance' in c) ||
-      typeof c.idInstance !== 'string' ||
-      !c.idInstance ||
-      !('apiTokenInstance' in c) ||
-      typeof c.apiTokenInstance !== 'string' ||
-      !c.apiTokenInstance
+      typeof v?.messenger !== 'string' ||
+      !Object.hasOwn(MESSENGERS, v.messenger) ||
+      !fields.every((f) => typeof f === 'string' && f)
     )
       return null
-    return value as Session
+    // Копируем только известные поля: лишнее из хранилища в стор не попадает.
+    return {
+      messenger: v.messenger,
+      credentials: {
+        apiUrl: c.apiUrl,
+        idInstance: c.idInstance,
+        apiTokenInstance: c.apiTokenInstance,
+      },
+    }
   } catch {
     return null
   }
@@ -97,7 +92,6 @@ const slice = createSlice({
         }
       >,
     ) {
-      if (action.payload.sessionId !== state.sessionId) return
       state.connection = action.payload.connection
       state.error = action.payload.error ?? null
     },
@@ -105,25 +99,22 @@ const slice = createSlice({
       state,
       action: PayloadAction<SessionScope & { warning: string | null }>,
     ) {
-      if (action.payload.sessionId === state.sessionId)
-        state.warning = action.payload.warning
+      state.warning = action.payload.warning
     },
   },
   extraReducers: (builder) => {
     builder.addMatcher(
-      (action): action is ReturnType<typeof loginOperation.pending> =>
+      (action): action is ReturnType<typeof login.pending> =>
         action.type === 'session/login/pending',
       (state, action) => {
-        if (action.meta.arg.sessionId !== state.sessionId) return
         state.loginRequestId = action.meta.requestId
         state.error = null
       },
     )
     builder.addMatcher(
-      (action): action is ReturnType<typeof loginOperation.rejected> =>
+      (action): action is ReturnType<typeof login.rejected> =>
         action.type === 'session/login/rejected',
       (state, action) => {
-        if (action.meta.arg.sessionId !== state.sessionId) return
         if (state.loginRequestId !== action.meta.requestId) return
         state.loginRequestId = null
         state.error = action.payload ?? 'Не удалось выполнить вход.'
@@ -135,3 +126,5 @@ const slice = createSlice({
 export const { sessionStarted, loggedOut, connectionChanged, warningChanged } =
   slice.actions
 export default slice.reducer
+
+export const selectSessionId = (state: StoreState) => state.session.sessionId
