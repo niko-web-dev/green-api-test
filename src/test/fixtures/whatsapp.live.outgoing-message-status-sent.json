@@ -1,0 +1,16 @@
+{
+  "receiptId": 2,
+  "body": {
+    "typeWebhook": "outgoingMessageStatus",
+    "chatId": "79990000002@c.us",
+    "instanceData": {
+      "idInstance": 4100000000,
+      "wid": "79990000001@c.us",
+      "typeInstance": "whatsapp"
+    },
+    "timestamp": 1791014908,
+    "idMessage": "3EB0000000000000000001",
+    "sendByApi": true,
+    "status": "sent"
+  }
+}
