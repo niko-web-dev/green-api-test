@@ -13,7 +13,8 @@
     "lint": "eslint .",
     "typecheck": "tsc -b",
     "test": "vitest run",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "test:live": "vitest run --mode live src/live"
   },
   "dependencies": {
     "@reduxjs/toolkit": "^2.13.0",
