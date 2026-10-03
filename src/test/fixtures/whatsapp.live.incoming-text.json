@@ -1,0 +1,26 @@
+{
+  "receiptId": 5,
+  "body": {
+    "typeWebhook": "incomingMessageReceived",
+    "idMessage": "3A00000000000000000002",
+    "instanceData": {
+      "idInstance": 4100000000,
+      "wid": "79990000001@c.us",
+      "typeInstance": "whatsapp"
+    },
+    "timestamp": 1791014958,
+    "senderData": {
+      "chatId": "79990000002@c.us",
+      "sender": "79990000002@c.us",
+      "senderName": "Тестовый Получатель",
+      "senderContactName": "Тестовый Получатель",
+      "chatName": "Тестовый Получатель"
+    },
+    "messageData": {
+      "typeMessage": "textMessage",
+      "textMessageData": {
+        "textMessage": "принято"
+      }
+    }
+  }
+}

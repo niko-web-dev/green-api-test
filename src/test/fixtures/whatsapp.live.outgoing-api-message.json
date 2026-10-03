@@ -1,0 +1,32 @@
+{
+  "receiptId": 1,
+  "body": {
+    "typeWebhook": "outgoingAPIMessageReceived",
+    "idMessage": "3EB0000000000000000001",
+    "instanceData": {
+      "idInstance": 4100000000,
+      "wid": "79990000001@c.us",
+      "typeInstance": "whatsapp"
+    },
+    "timestamp": 1791014901,
+    "senderData": {
+      "chatId": "79990000002@c.us",
+      "sender": "79990000001@c.us",
+      "senderName": "Тестовый Получатель",
+      "senderContactName": "Тестовый Получатель",
+      "chatName": "Тестовый Получатель"
+    },
+    "messageData": {
+      "typeMessage": "extendedTextMessage",
+      "extendedTextMessageData": {
+        "text": "Тестовое сообщение",
+        "description": "",
+        "title": "",
+        "previewType": "None",
+        "jpegThumbnail": "",
+        "forwardingScore": 0,
+        "isForwarded": false
+      }
+    }
+  }
+}
