@@ -1,3 +1,4 @@
+import type { ThunkAction, UnknownAction } from '@reduxjs/toolkit'
 import type { GreenApiClient } from '../api/greenApiClient'
 import type { Credentials } from '../api/types'
 import type { SessionState } from './sessionSlice'
@@ -19,3 +20,10 @@ export interface StoreExtra extends StoreDependencies {
 export interface SessionScope {
   sessionId: number
 }
+
+export type AppThunk<R = void> = ThunkAction<
+  R,
+  StoreState,
+  StoreExtra,
+  UnknownAction
+>

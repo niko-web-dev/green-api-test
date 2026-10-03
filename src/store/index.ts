@@ -12,27 +12,21 @@ const combinedReducer = combineReducers({
   chats: chatsReducer,
 })
 
+function sessionIdOf(action: UnknownAction): unknown {
+  const meta = action.meta as { arg?: { sessionId?: unknown } } | undefined
+  const payload = action.payload as { sessionId?: unknown } | null | undefined
+  return meta?.arg?.sessionId ?? payload?.sessionId
+}
+
 function reducer(
   state: StoreState | undefined,
   action: UnknownAction,
 ): StoreState {
-  if (
-    state &&
-    (action.type.startsWith('session/') || action.type.startsWith('chats/'))
-  ) {
-    const meta = action.meta
-    if (meta && typeof meta === 'object' && 'arg' in meta) {
-      const arg = meta.arg
-      // Все async-ответы проверяются до слайсов: отмена запроса сама по себе не исключает поздний ответ.
-      if (
-        arg &&
-        typeof arg === 'object' &&
-        'sessionId' in arg &&
-        arg.sessionId !== state.session.sessionId
-      )
-        return state
-    }
-  }
+  const id = sessionIdOf(action)
+  // Единственная защита от поздних ответов: действие чужой сессии не доходит до слайсов.
+  // Отмена запроса её не заменяет — ответ может прийти до обработки abort.
+  if (state && typeof id === 'number' && id !== state.session.sessionId)
+    return state
   return combinedReducer(state, action)
 }
 
@@ -68,7 +62,7 @@ export function makeStore(
 }
 
 export const store = makeStore()
-export type RootState = ReturnType<typeof store.getState>
+export type RootState = StoreState
 export type AppDispatch = typeof store.dispatch
 export const useAppDispatch = useDispatch.withTypes<AppDispatch>()
 export const useAppSelector = useSelector.withTypes<RootState>()

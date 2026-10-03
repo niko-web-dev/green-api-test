@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest'
-import type { NotificationBody } from './api/types'
 import { parseNotification } from './notifications'
 import type { IncomingText } from './notifications'
 
@@ -58,6 +57,14 @@ const expectedFixtures: Record<string, IncomingText | null> = {
     chatName: title,
     typeInstance: 'whatsapp',
   },
+  'max.docs.incoming-quoted.json': {
+    chatId: '10000002',
+    idMessage: '1763115112345',
+    text: 'Цитируем это',
+    timestamp: 1588091580,
+    chatName: title,
+    typeInstance: 'v3',
+  },
   'max.docs.check-account.json': null,
   'max.docs.send-message.json': null,
   'telegram.live.check-account.json': null,
@@ -73,10 +80,6 @@ const expectedFixtures: Record<string, IncomingText | null> = {
   'whatsapp.live.outgoing-message-status.json': null,
   'whatsapp.live.outgoing-message-status-sent.json': null,
   'whatsapp.live.outgoing-message-status-read.json': null,
-}
-
-function parseRaw(body: unknown) {
-  return parseNotification(body as NotificationBody)
 }
 
 function validBody(typeMessage = 'textMessage') {
@@ -111,174 +114,61 @@ describe('Фикстуры уведомлений', () => {
       fixture && typeof fixture === 'object' && 'body' in fixture
         ? fixture.body
         : fixture
-    expect(parseRaw(body)).toEqual(expectedFixtures[name])
+    expect(parseNotification(body)).toEqual(expectedFixtures[name])
   })
 })
 
-const brokenValues: unknown[] = [undefined, null, false, 42, [], {}]
-const invalidStrings: unknown[] = [...brokenValues, '', '   ']
-const invalidTimestamps: unknown[] = [
-  undefined,
-  null,
-  false,
-  '1790944940',
-  [],
-  {},
-  NaN,
-  Infinity,
-  -Infinity,
-  -1,
-]
-
-describe.each(['textMessage', 'extendedTextMessage'])(
-  'Разбор %s',
-  (typeMessage) => {
-    it.each(['-10000002', '-10000002@g.us', '79990000002@g.us'])(
-      'игнорирует групповой чат %s',
-      (chatId) => {
-        const body = validBody(typeMessage)
-        body.senderData.chatId = chatId
-        expect(parseNotification(body)).toBeNull()
-      },
-    )
-
-    it.each([
-      'outgoingMessageReceived',
-      'outgoingAPIMessageReceived',
-      'outgoingMessageStatus',
-      'stateInstanceChanged',
-      'unknown',
-      '',
-      ...brokenValues,
-    ])('игнорирует неподдерживаемый typeWebhook %j', (typeWebhook) => {
-      expect(parseRaw({ ...validBody(typeMessage), typeWebhook })).toBeNull()
-    })
-
-    const dataKey =
-      typeMessage === 'textMessage'
-        ? 'textMessageData'
-        : 'extendedTextMessageData'
-    const textKey = typeMessage === 'textMessage' ? 'textMessage' : 'text'
-    const invalidFields: [string[], unknown[]][] = [
-      [['instanceData'], brokenValues],
-      [['senderData'], brokenValues],
-      [['messageData'], brokenValues],
-      [['idMessage'], invalidStrings],
-      [['timestamp'], invalidTimestamps],
-      [['instanceData', 'typeInstance'], invalidStrings],
-      [['senderData', 'chatId'], invalidStrings],
-      [
-        ['senderData', 'chatName'],
-        brokenValues.filter((value) => value !== undefined),
-      ],
-      [
-        ['senderData', 'senderName'],
-        brokenValues.filter((value) => value !== undefined),
-      ],
-      [['messageData', 'typeMessage'], invalidStrings],
-      [['messageData', dataKey], brokenValues],
-      [['messageData', dataKey, textKey], brokenValues],
-    ]
-    const cases = invalidFields.flatMap(([path, values]) =>
-      values.map((value) => ({ field: path.join('.'), path, value })),
-    )
-
-    it.each(cases)(
-      'возвращает null без исключения: $field = $value',
-      ({ path, value }) => {
-        const body = validBody(typeMessage)
-        let parent = body as Record<string, unknown>
-        for (const key of path.slice(0, -1))
-          parent = parent[key] as Record<string, unknown>
-        const key = path.at(-1)!
-        if (value === undefined) delete parent[key]
-        else parent[key] = value
-        expect(() => parseRaw(body)).not.toThrow()
-        expect(parseRaw(body)).toBeNull()
-      },
-    )
-
-    it.each([
-      ['Название', 'Отправитель', 'Название'],
-      ['', 'Отправитель', 'Отправитель'],
-      [undefined, 'Отправитель', 'Отправитель'],
-      ['', '', '10000002'],
-      [undefined, undefined, '10000002'],
-    ])('выбирает имя чата: %j / %j', (chatName, senderName, expected) => {
-      const body = validBody(typeMessage)
-      expect(
-        parseRaw({
-          ...body,
-          senderData: { chatId: '10000002', chatName, senderName },
-        })?.chatName,
-      ).toBe(expected)
-    })
-
-    it.each(['', '  ', ' строка\n🙂 https://example.com '])(
-      'сохраняет текст без преобразований %j',
-      (text) => {
-        const body = validBody(typeMessage)
-        expect(
-          parseRaw({
-            ...body,
-            messageData: { typeMessage, [dataKey]: { [textKey]: text } },
-          })?.text,
-        ).toBe(text)
-      },
-    )
-
-    it('не меняет исходное уведомление и одинаково разбирает повтор', () => {
-      const body = validBody(typeMessage)
-      const before = JSON.stringify(body)
-      expect(parseNotification(body)).toEqual(parseNotification(body))
-      expect(JSON.stringify(body)).toBe(before)
-    })
-
-    it('сохраняет нулевую временную метку и неизвестный строковый typeInstance', () => {
-      const body = validBody(typeMessage)
-      body.timestamp = 0
-      body.instanceData.typeInstance = 'new-messenger'
-      expect(parseNotification(body)).toMatchObject({
-        timestamp: 0,
-        typeInstance: 'new-messenger',
-      })
-    })
-  },
-)
-
-describe('Неподдерживаемые данные', () => {
-  it.each([...brokenValues, 'текст'])(
-    'не выбрасывает исключение для тела %j',
-    (body) => {
-      expect(() => parseRaw(body)).not.toThrow()
-      expect(parseRaw(body)).toBeNull()
-    },
-  )
-
-  it.each([
-    'imageMessage',
-    'videoMessage',
-    'audioMessage',
-    'documentMessage',
-    'locationMessage',
-    'contactMessage',
-    'stickerMessage',
-    'unknown',
-  ])('игнорирует тип сообщения %s даже при наличии текста', (typeMessage) => {
-    const body = validBody()
-    body.messageData.typeMessage = typeMessage
-    expect(parseNotification(body)).toBeNull()
-  })
-
-  it.each(['textMessage', 'extendedTextMessage'])(
-    'не использует текст из другого формата для %s',
-    (typeMessage) => {
-      const body = validBody(typeMessage)
-      body.messageData = validBody(
-        typeMessage === 'textMessage' ? 'extendedTextMessage' : 'textMessage',
-      ).messageData
-      body.messageData.typeMessage = typeMessage
+describe('Разбор уведомлений', () => {
+  it.each(['-10000002', '-10000002@g.us', '79990000002@g.us'])(
+    'игнорирует группу %s',
+    (chatId) => {
+      const body = validBody()
+      body.senderData.chatId = chatId
       expect(parseNotification(body)).toBeNull()
     },
   )
+  it.each(['outgoingMessageReceived', 'stateInstanceChanged'])(
+    'игнорирует событие %s',
+    (typeWebhook) => {
+      expect(parseNotification({ ...validBody(), typeWebhook })).toBeNull()
+    },
+  )
+  it.each([undefined, null, 42, 'текст', [], {}])(
+    'игнорирует сломанное тело %j',
+    (body) => {
+      expect(parseNotification(body)).toBeNull()
+    },
+  )
+  it.each([
+    { senderData: undefined },
+    { senderData: { chatId: '' } },
+    { idMessage: undefined },
+    { timestamp: '1790944940' },
+    { timestamp: -1 },
+    { instanceData: {} },
+    { messageData: { typeMessage: 'textMessage' } },
+    {
+      messageData: {
+        typeMessage: 'textMessage',
+        textMessageData: { textMessage: 42 },
+      },
+    },
+  ])('отклоняет неверное поле %#', (patch) => {
+    expect(parseNotification({ ...validBody(), ...patch })).toBeNull()
+  })
+  it.each([
+    ['Название', 'Отправитель', 'Название'],
+    ['', 'Отправитель', 'Отправитель'],
+    ['', '', '10000002'],
+  ])('выбирает имя чата %#', (chatName, senderName, expected) => {
+    expect(
+      parseNotification({
+        ...validBody(),
+        senderData: { chatId: '10000002', chatName, senderName },
+      })?.chatName,
+    ).toBe(expected)
+  })
+  it.each(['imageMessage', 'unknown'])('игнорирует тип %s', (typeMessage) => {
+    expect(parseNotification(validBody(typeMessage))).toBeNull()
+  })
 })

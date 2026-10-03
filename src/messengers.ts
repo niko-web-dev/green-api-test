@@ -1,5 +1,4 @@
-// Отличия собраны в профилях, чтобы общий код использовал единый контракт
-// и не обрастал ветвлениями при выборе мессенджера.
+// Отличия мессенджеров собраны в профилях, чтобы общий код не ветвился по messenger.
 import type { GreenApiClient } from './api/greenApiClient'
 
 export type MessengerId = 'max' | 'telegram' | 'whatsapp'
@@ -10,76 +9,67 @@ export interface ResolvedChat {
 }
 
 export interface MessengerProfile {
-  id: MessengerId
   title: string
   typeInstance: 'v3' | 'telegram' | 'whatsapp'
   defaultApiUrl: string
   maxMessageLength: number
-  phoneHint: string
-  validatePhone(digits: string): string | null
   resolveChat(
     client: GreenApiClient,
     digits: string,
     signal?: AbortSignal,
-  ): Promise<ResolvedChat>
+  ): Promise<ResolvedChat | null>
 }
 
 export function normalizePhone(input: string): string {
   return input.replace(/\D/g, '')
 }
 
-function validateRussianPhone(digits: string): string | null {
+// Продуктовое ограничение: только российские номера (код 7, 11 цифр).
+// API MAX принимает и белорусские номера, но приложение намеренно их не поддерживает.
+export const PHONE_HINT = 'Российский номер с кодом 7 (11 цифр)'
+export function validatePhone(digits: string): string | null {
   return /^7[0-9]{10}$/.test(digits)
     ? null
     : 'Введите российский номер с кодом 7 (11 цифр)'
 }
 
-function resolveAccount(title: string): MessengerProfile['resolveChat'] {
-  return async (client, digits, signal) => {
-    const account = await client.checkAccount(Number(digits), signal)
-    if (!account.exist) throw new Error(`Номер не зарегистрирован в ${title}`)
-    return { chatId: account.chatId, title: `+${digits}` }
-  }
+const resolveAccount: MessengerProfile['resolveChat'] = async (
+  client,
+  digits,
+  signal,
+) => {
+  const { exist, chatId } = await client.checkAccount(Number(digits), signal)
+  return exist ? { chatId, title: `+${digits}` } : null
 }
 
+// defaultApiUrl — подсказка для формы: хост зависит от инстанса и берётся из кабинета GREEN-API.
 export const MESSENGERS: Record<MessengerId, MessengerProfile> = {
   max: {
-    id: 'max',
     title: 'MAX',
     typeInstance: 'v3',
     // Хост из https://green-api.com/v3/docs/request-format/ — не проверено на реальном инстансе.
     defaultApiUrl: 'https://3100.api.green-api.com',
     maxMessageLength: 4000,
-    phoneHint: 'Российский номер с кодом 7 (11 цифр)',
-    validatePhone: validateRussianPhone,
-    resolveChat: resolveAccount('MAX'),
+    resolveChat: resolveAccount,
   },
   telegram: {
-    id: 'telegram',
     title: 'Telegram',
     typeInstance: 'telegram',
     defaultApiUrl: 'https://4100.api.green-api.com',
     maxMessageLength: 4096,
-    phoneHint: 'Российский номер с кодом 7 (11 цифр)',
-    validatePhone: validateRussianPhone,
-    resolveChat: resolveAccount('Telegram'),
+    resolveChat: resolveAccount,
   },
   whatsapp: {
-    id: 'whatsapp',
     title: 'WhatsApp',
     typeInstance: 'whatsapp',
     defaultApiUrl: 'https://7107.api.greenapi.com',
     maxMessageLength: 20000,
-    phoneHint: 'Российский номер с кодом 7 (11 цифр)',
-    validatePhone: validateRussianPhone,
     async resolveChat(client, digits, signal) {
       const account = await client.checkWhatsapp(Number(digits), signal)
-      if (!account.existsWhatsapp)
-        throw new Error('Номер не зарегистрирован в WhatsApp')
       // При enableLidMode=no уведомления используют телефонный chatId, а проверка может вернуть @lid.
-      return { chatId: `${digits}@c.us`, title: `+${digits}` }
+      return account.existsWhatsapp
+        ? { chatId: `${digits}@c.us`, title: `+${digits}` }
+        : null
     },
   },
 }
-
-export const ENABLED_MESSENGERS: MessengerId[] = ['max', 'telegram', 'whatsapp']

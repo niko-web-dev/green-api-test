@@ -5,19 +5,25 @@ import { describe, it } from 'vitest'
 import { makeStore } from '../store'
 import { login, openChat, sendMessage } from '../store/thunks'
 import { loggedOut } from '../store/sessionSlice'
-import { readTelegramConfig } from './config'
 
-const config = readTelegramConfig(loadEnv('live', process.cwd(), ''))
+const env = loadEnv('live', process.cwd(), 'GREEN_API_')
+const apiUrl = env.GREEN_API_URL?.trim()
+const idInstance = env.GREEN_API_ID?.trim()
+const apiTokenInstance = env.GREEN_API_TOKEN?.trim()
+// Номер задаётся явно, чтобы одни только учётные данные не запускали реальную отправку.
+const phoneInput = env.GREEN_API_TEST_PHONE?.trim()
+const ready = Boolean(apiUrl && idInstance && apiTokenInstance && phoneInput)
 
-describe.skipIf(!config)('Живой обмен через Telegram', () => {
+describe.skipIf(!ready)('Живой обмен через Telegram', () => {
   it('входит, открывает чат, отправляет и получает ответ второго тестового аккаунта', async () => {
-    if (!config) return
+    if (!apiUrl || !idInstance || !apiTokenInstance || !phoneInput) return
     const store = makeStore()
     try {
       const signedIn = await store.dispatch(
         login({
+          sessionId: store.getState().session.sessionId,
           messenger: 'telegram',
-          credentials: config.credentials,
+          credentials: { apiUrl, idInstance, apiTokenInstance },
         }),
       )
       if (
@@ -30,7 +36,10 @@ describe.skipIf(!config)('Живой обмен через Telegram', () => {
         )
       }
       const opened = await store.dispatch(
-        openChat({ phoneInput: config.phoneInput }),
+        openChat({
+          sessionId: store.getState().session.sessionId,
+          phoneInput,
+        }),
       )
       if (!openChat.fulfilled.match(opened))
         throw new Error(
@@ -40,13 +49,16 @@ describe.skipIf(!config)('Живой обмен через Telegram', () => {
       const marker = crypto.randomUUID()
       const sent = await store.dispatch(
         sendMessage({
+          sessionId: store.getState().session.sessionId,
           chatId,
           text: `Проверка обмена. Ответьте со второго тестового аккаунта, скопировав код: ${marker}`,
         }),
       )
       if (!sendMessage.fulfilled.match(sent))
         throw new Error(
-          store.getState().chats.error ?? 'Отправка не подтверждена.',
+          store.getState().chats.messagesByChat[chatId]?.at(-1)?.error ??
+            store.getState().chats.error ??
+            'Отправка не подтверждена.',
         )
       console.info(
         'Отправка подтверждена. Ответьте со второго тестового аккаунта кодом из сообщения; ожидание — две минуты.',

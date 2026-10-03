@@ -1,4 +1,4 @@
-import type { NotificationBody } from './api/types'
+import { isRecord } from './api/greenApiClient'
 
 export interface IncomingText {
   chatId: string
@@ -9,17 +9,11 @@ export interface IncomingText {
   typeInstance: string
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0
 }
 
-// Даже при null цикл получения обязан вызвать deleteNotification и продолжить
-// работу: неподдерживаемое или повреждённое уведомление не должно блокировать очередь.
-export function parseNotification(body: NotificationBody): IncomingText | null {
+export function parseNotification(body: unknown): IncomingText | null {
   if (!isRecord(body) || body.typeWebhook !== 'incomingMessageReceived')
     return null
 
@@ -33,6 +27,7 @@ export function parseNotification(body: NotificationBody): IncomingText | null {
 
   const { chatId, chatName, senderName } = senderData
   const { typeInstance } = instanceData
+  // Только личные чаты: у групп MAX и Telegram отрицательный chatId, у групп WhatsApp — суффикс @g.us.
   if (
     !isNonEmptyString(chatId) ||
     chatId.startsWith('-') ||
@@ -54,7 +49,8 @@ export function parseNotification(body: NotificationBody): IncomingText | null {
   ) {
     text = messageData.textMessageData.textMessage
   } else if (
-    messageData.typeMessage === 'extendedTextMessage' &&
+    (messageData.typeMessage === 'extendedTextMessage' ||
+      messageData.typeMessage === 'quotedMessage') &&
     isRecord(messageData.extendedTextMessageData)
   ) {
     text = messageData.extendedTextMessageData.text
