@@ -1,0 +1,28 @@
+{
+  "typeWebhook": "incomingMessageReceived",
+  "instanceData": {
+    "idInstance": 4100000000,
+    "wid": "79990000001@c.us",
+    "typeInstance": "v3"
+  },
+  "timestamp": 1588091580,
+  "idMessage": "1763115112345",
+  "senderData": {
+    "chatId": "10000002",
+    "chatName": "Тестовый Получатель",
+    "chatType": "user",
+    "sender": "10000002",
+    "senderName": "Тестовый Получатель",
+    "senderType": "user",
+    "senderContactName": "Тестовый Получатель",
+    "senderPhoneNumber": 79990000002
+  },
+  "messageData": {
+    "typeMessage": "quotedMessage",
+    "extendedTextMessageData": {
+      "text": "Цитируем это",
+      "stanzaId": "116413118178426437",
+      "participant": "10000002"
+    }
+  }
+}
