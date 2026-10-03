@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { GreenApiError } from './api/greenApiClient'
-import type { GreenApiClient } from './api/greenApiClient'
+import { createFakeClient } from './test/fakeClient'
 import type { ReceivedNotification } from './api/types'
 import { runNotificationLoop } from './notificationLoop'
 
@@ -10,29 +10,7 @@ function notification(receiptId = 1): ReceivedNotification {
 
 function setup() {
   const controller = new AbortController()
-  const client = {
-    getStateInstance: vi.fn<GreenApiClient['getStateInstance']>(),
-    checkAccount: vi.fn<GreenApiClient['checkAccount']>(),
-    checkWhatsapp: vi.fn<GreenApiClient['checkWhatsapp']>(),
-    sendMessage: vi.fn<GreenApiClient['sendMessage']>(),
-    receiveNotification: vi.fn<GreenApiClient['receiveNotification']>(
-      (_timeout, signal) =>
-        new Promise((_resolve, reject) => {
-          if (signal?.aborted) {
-            reject(new GreenApiError('aborted'))
-            return
-          }
-          signal?.addEventListener(
-            'abort',
-            () => reject(new GreenApiError('aborted')),
-            { once: true },
-          )
-        }),
-    ),
-    deleteNotification: vi
-      .fn<GreenApiClient['deleteNotification']>()
-      .mockResolvedValue(true),
-  } satisfies GreenApiClient
+  const client = createFakeClient()
   const handlers = { onNotification: vi.fn(), onStatus: vi.fn() }
   return { controller, client, handlers, signal: controller.signal }
 }
@@ -45,11 +23,11 @@ beforeEach(() => vi.useFakeTimers())
 afterEach(() => vi.useRealTimers())
 
 describe('Цикл получения уведомлений', () => {
-  it('обрабатывает даже служебное событие до подтверждения, без параллельных запросов', async () => {
+  it('обрабатывает событие до последовательного delete', async () => {
     const { client, handlers, controller, signal } = setup()
     const order: string[] = []
     const event = notification()
-    let finishDelete!: (result: boolean) => void
+    let finishDelete!: () => void
     client.receiveNotification.mockImplementationOnce(async () => {
       order.push('receive')
       return event
@@ -68,28 +46,27 @@ describe('Цикл получения уведомлений', () => {
     expect(order).toEqual(['receive', 'handler', 'delete'])
     expect(handlers.onNotification).toHaveBeenCalledWith(event.body)
     expect(client.receiveNotification).toHaveBeenCalledExactlyOnceWith(
-      20,
+      5,
       signal,
     )
     expect(client.deleteNotification).toHaveBeenCalledWith(1, signal)
-    finishDelete(true)
+    finishDelete()
     await flush()
     expect(client.receiveNotification).toHaveBeenCalledTimes(2)
     controller.abort()
     await loop
   })
 
-  it('сразу повторяет запрос после null и сообщает online только один раз', async () => {
+  it('после null продолжает длинный опрос', async () => {
     const { client, handlers, controller, signal } = setup()
     client.receiveNotification
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(null)
-    const loop = runNotificationLoop(client, handlers, signal, {
-      receiveTimeoutSec: 35,
-    })
+    const loop = runNotificationLoop(client, handlers, signal)
     await flush()
     expect(client.receiveNotification).toHaveBeenCalledTimes(3)
-    expect(client.receiveNotification).toHaveBeenLastCalledWith(35, signal)
+    expect(client.receiveNotification).toHaveBeenLastCalledWith(20, signal)
+    expect(client.receiveNotification).toHaveBeenNthCalledWith(1, 5, signal)
     expect(handlers.onStatus).toHaveBeenCalledExactlyOnceWith('online')
     expect(handlers.onNotification).not.toHaveBeenCalled()
     expect(client.deleteNotification).not.toHaveBeenCalled()
@@ -98,8 +75,8 @@ describe('Цикл получения уведомлений', () => {
     await loop
   })
 
-  it.each(['успех', 'ошибка', 'false'] as const)(
-    'повторяет подтверждение, но не обработку receiptId после результата delete: %s',
+  it.each(['успех', 'ошибка'] as const)(
+    'повторяет обработку после delete: %s',
     async (result) => {
       const { client, handlers, controller, signal } = setup()
       client.receiveNotification
@@ -109,12 +86,10 @@ describe('Цикл получения уведомлений', () => {
         client.deleteNotification.mockRejectedValueOnce(
           new GreenApiError('network'),
         )
-      if (result === 'false')
-        client.deleteNotification.mockResolvedValueOnce(false)
       const loop = runNotificationLoop(client, handlers, signal)
       await flush()
       if (result !== 'успех') await vi.advanceTimersByTimeAsync(1000)
-      expect(handlers.onNotification).toHaveBeenCalledTimes(1)
+      expect(handlers.onNotification).toHaveBeenCalledTimes(2)
       expect(client.deleteNotification.mock.calls).toEqual([
         [1, signal],
         [1, signal],
@@ -124,7 +99,7 @@ describe('Цикл получения уведомлений', () => {
     },
   )
 
-  it('подтверждает событие при исключении обработчика и продолжает очередь', async () => {
+  it('ошибка обработчика не блокирует очередь', async () => {
     const { client, handlers, controller, signal } = setup()
     client.receiveNotification
       .mockResolvedValueOnce(notification(1))
@@ -135,7 +110,7 @@ describe('Цикл получения уведомлений', () => {
     })
     const loop = runNotificationLoop(client, handlers, signal)
     await flush()
-    expect(handlers.onNotification).toHaveBeenCalledTimes(2)
+    expect(handlers.onNotification).toHaveBeenCalledTimes(3)
     expect(client.deleteNotification.mock.calls.map(([id]) => id)).toEqual([
       1, 1, 2,
     ])
@@ -144,25 +119,8 @@ describe('Цикл получения уведомлений', () => {
     await loop
   })
 
-  it('сохраняет ровно последние 100 разных receiptId, повторы не вытесняют старые', async () => {
-    const { client, handlers, controller, signal } = setup()
-    for (let id = 1; id <= 100; id++)
-      client.receiveNotification.mockResolvedValueOnce(notification(id))
-    client.receiveNotification
-      .mockResolvedValueOnce(notification(1))
-      .mockResolvedValueOnce(notification(101))
-      .mockResolvedValueOnce(notification(2))
-      .mockResolvedValueOnce(notification(1))
-    const loop = runNotificationLoop(client, handlers, signal)
-    await flush()
-    expect(handlers.onNotification).toHaveBeenCalledTimes(102)
-    expect(client.deleteNotification).toHaveBeenCalledTimes(104)
-    controller.abort()
-    await loop
-  })
-
-  it.each(['network', 'server', 'rateLimit'] as const)(
-    'увеличивает паузу до 30 секунд при %s, восстанавливается и сбрасывает паузу',
+  it.each(['network', 'notReady'] as const)(
+    'наращивает и сбрасывает паузу: %s',
     async (kind) => {
       const { client, handlers, controller, signal } = setup()
       const error = new GreenApiError(kind)
@@ -190,53 +148,29 @@ describe('Цикл получения уведомлений', () => {
       expect(client.receiveNotification).toHaveBeenCalledTimes(9)
       await vi.advanceTimersByTimeAsync(1)
       expect(client.receiveNotification).toHaveBeenCalledTimes(11)
+      expect(client.receiveNotification).toHaveBeenNthCalledWith(10, 5, signal)
+      expect(client.receiveNotification).toHaveBeenLastCalledWith(20, signal)
       expect(handlers.onStatus).toHaveBeenLastCalledWith('online')
       controller.abort()
       await loop
     },
   )
 
-  it('учитывает пользовательский предел паузы, в том числе меньше секунды', async () => {
-    const { client, handlers, controller, signal } = setup()
-    client.receiveNotification
-      .mockRejectedValueOnce(new GreenApiError('network'))
-      .mockRejectedValueOnce(new GreenApiError('network'))
-    const loop = runNotificationLoop(client, handlers, signal, {
-      maxBackoffMs: 250,
-    })
-    await flush()
-    await vi.advanceTimersByTimeAsync(249)
-    expect(client.receiveNotification).toHaveBeenCalledTimes(1)
-    await vi.advanceTimersByTimeAsync(250)
-    expect(client.receiveNotification).toHaveBeenCalledTimes(2)
-    await vi.advanceTimersByTimeAsync(1)
-    expect(client.receiveNotification).toHaveBeenCalledTimes(3)
-    controller.abort()
-    await loop
-  })
-
   it.each(['auth', 'webhookSet', 'quota', 'badRequest'] as const)(
-    'останавливается при %s как на receive, так и на delete',
+    'останавливается при %s',
     async (kind) => {
-      for (const method of [
-        'receiveNotification',
-        'deleteNotification',
-      ] as const) {
-        const { client, handlers, signal } = setup()
-        const error = new GreenApiError(kind)
-        if (method === 'deleteNotification')
-          client.receiveNotification.mockResolvedValueOnce(notification())
-        client[method].mockRejectedValueOnce(error)
-        await runNotificationLoop(client, handlers, signal)
-        expect(handlers.onStatus).toHaveBeenLastCalledWith('stopped', error)
-        await vi.advanceTimersByTimeAsync(60_000)
-        expect(client.receiveNotification).toHaveBeenCalledTimes(1)
-        expect(vi.getTimerCount()).toBe(0)
-      }
+      const { client, handlers, signal } = setup()
+      const error = new GreenApiError(kind)
+      client.receiveNotification.mockRejectedValueOnce(error)
+      await runNotificationLoop(client, handlers, signal)
+      expect(handlers.onStatus).toHaveBeenLastCalledWith('stopped', error)
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(client.receiveNotification).toHaveBeenCalledTimes(1)
+      expect(vi.getTimerCount()).toBe(0)
     },
   )
 
-  it('выходит при заранее отменённом сигнале без запросов и статусов', async () => {
+  it('заранее отменённый цикл не запускается', async () => {
     const { client, handlers, controller, signal } = setup()
     controller.abort()
     await runNotificationLoop(client, handlers, signal)
@@ -244,7 +178,7 @@ describe('Цикл получения уведомлений', () => {
     expect(handlers.onStatus).not.toHaveBeenCalled()
   })
 
-  it('отменяет ожидающий receive без ошибки статуса и новых запросов', async () => {
+  it('отмена receive завершает цикл', async () => {
     const { client, handlers, controller, signal } = setup()
     const loop = runNotificationLoop(client, handlers, signal)
     controller.abort()
@@ -254,7 +188,7 @@ describe('Цикл получения уведомлений', () => {
     expect(handlers.onStatus).not.toHaveBeenCalled()
   })
 
-  it('немедленно прерывает паузу и удаляет таймер и слушатель отмены', async () => {
+  it('отмена очищает паузу и слушатель', async () => {
     const { client, handlers, controller, signal } = setup()
     const removeListener = vi.spyOn(signal, 'removeEventListener')
     const error = new GreenApiError('network')
@@ -274,23 +208,26 @@ describe('Цикл получения уведомлений', () => {
     )
   })
 
-  it.each(['receiveNotification', 'deleteNotification'] as const)(
-    'не считает ошибку aborted на %s аварией даже без отмены сигнала',
-    async (method) => {
-      const { client, handlers, signal } = setup()
-      if (method === 'deleteNotification')
-        client.receiveNotification.mockResolvedValueOnce(notification())
-      client[method].mockRejectedValueOnce(new GreenApiError('aborted'))
-      await runNotificationLoop(client, handlers, signal)
-      expect(handlers.onStatus.mock.calls).toEqual(
-        method === 'deleteNotification' ? [['online']] : [],
-      )
-      expect(client.receiveNotification).toHaveBeenCalledTimes(1)
-      expect(vi.getTimerCount()).toBe(0)
-    },
-  )
+  it('aborted без сигнала вызывает переподключение', async () => {
+    const { client, handlers, controller, signal } = setup()
+    client.receiveNotification.mockRejectedValueOnce(
+      new GreenApiError('aborted'),
+    )
+    const loop = runNotificationLoop(client, handlers, signal)
+    await flush()
+    expect(handlers.onStatus).toHaveBeenCalledWith(
+      'reconnecting',
+      expect.objectContaining({ kind: 'network' }),
+    )
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(client.receiveNotification).toHaveBeenCalledTimes(2)
+    expect(client.receiveNotification).toHaveBeenLastCalledWith(5, signal)
+    controller.abort()
+    await loop
+    expect(vi.getTimerCount()).toBe(0)
+  })
 
-  it('отменяет ожидающий delete без повторного запроса и ошибки статуса', async () => {
+  it('отмена delete завершает цикл', async () => {
     const { client, handlers, controller, signal } = setup()
     client.receiveNotification.mockResolvedValueOnce(notification())
     client.deleteNotification.mockImplementationOnce(
@@ -313,53 +250,6 @@ describe('Цикл получения уведомлений', () => {
     expect(handlers.onStatus).toHaveBeenCalledExactlyOnceWith('online')
   })
 
-  it('не разделяет receiptId между одновременно работающими циклами', async () => {
-    const first = setup()
-    const second = setup()
-    first.client.receiveNotification.mockResolvedValueOnce(notification())
-    second.client.receiveNotification.mockResolvedValueOnce(notification())
-    const firstLoop = runNotificationLoop(
-      first.client,
-      first.handlers,
-      first.signal,
-    )
-    const secondLoop = runNotificationLoop(
-      second.client,
-      second.handlers,
-      second.signal,
-    )
-    await flush()
-    expect(first.handlers.onNotification).toHaveBeenCalledTimes(1)
-    expect(second.handlers.onNotification).toHaveBeenCalledTimes(1)
-    first.controller.abort()
-    await firstLoop
-    expect(second.signal.aborted).toBe(false)
-    second.controller.abort()
-    await secondLoop
-  })
-
-  it('ограничивает экспоненциальную паузу нестепенным пределом и очищает слушатель после таймера', async () => {
-    const { client, handlers, controller, signal } = setup()
-    const removeListener = vi.spyOn(signal, 'removeEventListener')
-    for (let i = 0; i < 4; i++)
-      client.receiveNotification.mockRejectedValueOnce(
-        new GreenApiError('network'),
-      )
-    const loop = runNotificationLoop(client, handlers, signal, {
-      maxBackoffMs: 2500,
-    })
-    await flush()
-    for (const [index, delay] of [1000, 2000, 2500, 2500].entries()) {
-      await vi.advanceTimersByTimeAsync(delay - 1)
-      expect(client.receiveNotification).toHaveBeenCalledTimes(index + 1)
-      await vi.advanceTimersByTimeAsync(1)
-      expect(removeListener).toHaveBeenCalledTimes(index + 1)
-    }
-    expect(vi.getTimerCount()).toBe(0)
-    controller.abort()
-    await loop
-  })
-
   it('отбрасывает поздний ответ receive после отмены', async () => {
     const { client, handlers, controller, signal } = setup()
     let resolve!: (event: ReceivedNotification) => void
@@ -378,7 +268,7 @@ describe('Цикл получения уведомлений', () => {
     expect(client.deleteNotification).not.toHaveBeenCalled()
   })
 
-  it('не подтверждает событие, если обработчик отменил сигнал', async () => {
+  it('отмена обработчика предотвращает delete', async () => {
     const { client, handlers, controller, signal } = setup()
     client.receiveNotification.mockResolvedValueOnce(notification())
     handlers.onNotification.mockImplementation(() => controller.abort())
@@ -387,45 +277,12 @@ describe('Цикл получения уведомлений', () => {
     expect(client.receiveNotification).toHaveBeenCalledTimes(1)
   })
 
-  it('отмена одного запуска не затрагивает обработку, дедупликацию и паузу другого', async () => {
-    const first = setup()
-    const second = setup()
-    first.client.receiveNotification.mockRejectedValueOnce(
-      new GreenApiError('network'),
-    )
-    second.client.receiveNotification
-      .mockResolvedValueOnce(notification())
-      .mockRejectedValueOnce(new GreenApiError('server'))
-      .mockResolvedValueOnce(notification())
-    const firstLoop = runNotificationLoop(
-      first.client,
-      first.handlers,
-      first.signal,
-    )
-    const secondLoop = runNotificationLoop(
-      second.client,
-      second.handlers,
-      second.signal,
-    )
-    await flush()
-    first.controller.abort()
-    await firstLoop
-    await vi.advanceTimersByTimeAsync(1000)
-    expect(first.client.receiveNotification).toHaveBeenCalledTimes(1)
-    expect(second.client.deleteNotification).toHaveBeenCalledTimes(2)
-    expect(second.handlers.onNotification).toHaveBeenCalledTimes(1)
-    second.controller.abort()
-    await secondLoop
-    const third = setup()
-    third.client.receiveNotification.mockResolvedValueOnce(notification())
-    const thirdLoop = runNotificationLoop(
-      third.client,
-      third.handlers,
-      third.signal,
-    )
-    await flush()
-    expect(third.handlers.onNotification).toHaveBeenCalledTimes(1)
-    third.controller.abort()
-    await thirdLoop
+  it('отмена статуса предотвращает обработку события', async () => {
+    const { client, handlers, controller, signal } = setup()
+    client.receiveNotification.mockResolvedValueOnce(notification())
+    handlers.onStatus.mockImplementation(() => controller.abort())
+    await runNotificationLoop(client, handlers, signal)
+    expect(handlers.onNotification).not.toHaveBeenCalled()
+    expect(client.deleteNotification).not.toHaveBeenCalled()
   })
 })

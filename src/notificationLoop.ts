@@ -1,13 +1,24 @@
 import { GreenApiError } from './api/greenApiClient'
-import type { GreenApiClient } from './api/greenApiClient'
-import type { NotificationBody } from './api/types'
+import type { GreenApiClient, GreenApiErrorKind } from './api/greenApiClient'
 
 export type LoopStatus = 'online' | 'reconnecting' | 'stopped'
 
 export interface LoopHandlers {
-  onNotification(body: NotificationBody): void
+  onNotification(body: Record<string, unknown>): void
   onStatus(status: LoopStatus, error?: GreenApiError): void
 }
+
+const FIRST_RECEIVE_TIMEOUT_SEC = 5
+const RECEIVE_TIMEOUT_SEC = 20
+const INITIAL_BACKOFF_MS = 1000
+const MAX_BACKOFF_MS = 30_000
+// Повтор не поможет: нужны правка учётных данных, настроек инстанса или тарифа.
+const STOP_KINDS = new Set<GreenApiErrorKind>([
+  'auth',
+  'webhookSet',
+  'quota',
+  'badRequest',
+])
 
 function pause(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -29,62 +40,51 @@ export async function runNotificationLoop(
   client: GreenApiClient,
   handlers: LoopHandlers,
   signal: AbortSignal,
-  options: { receiveTimeoutSec?: number; maxBackoffMs?: number } = {},
 ): Promise<void> {
-  const timeoutSec = options.receiveTimeoutSec ?? 20
-  const maxBackoffMs = options.maxBackoffMs ?? 30_000
-  const receipts = new Set<number>()
-  let backoffMs = Math.min(1000, maxBackoffMs)
+  let backoffMs = INITIAL_BACKOFF_MS
   let status: LoopStatus | undefined
 
   while (!signal.aborted) {
     try {
+      // Короткий первый запрос подтверждает online за 5 с даже на пустой очереди.
+      const timeoutSec =
+        status === 'online' ? RECEIVE_TIMEOUT_SEC : FIRST_RECEIVE_TIMEOUT_SEC
       const notification = await client.receiveNotification(timeoutSec, signal)
       if (signal.aborted) return
       if (status !== 'online') {
         status = 'online'
         handlers.onStatus(status)
       }
-      backoffMs = Math.min(1000, maxBackoffMs)
+      backoffMs = INITIAL_BACKOFF_MS
       if (signal.aborted) return
       if (notification === null) continue
 
       const { receiptId, body } = notification
-      if (!receipts.has(receiptId)) {
-        receipts.add(receiptId)
-        if (receipts.size > 100) {
-          const oldest = receipts.values().next().value
-          if (oldest !== undefined) receipts.delete(oldest)
-        }
-        try {
-          handlers.onNotification(body)
-        } catch {
-          // Ошибка обработчика не должна навсегда блокировать FIFO-очередь.
-          // Подтверждаем даже такое событие: ценой его потери сохраняем доставку следующих.
-        }
+      // Повтор после неудачного delete допустим: дубли отсекает стор по idMessage.
+      // Подтверждаем и нерелевантные уведомления, иначе очередь встанет на них.
+      try {
+        handlers.onNotification(body)
+      } catch {
+        // Ошибка обработчика не должна блокировать FIFO-очередь: подтверждаем и такое событие.
       }
       if (signal.aborted) return
-      const deleted = await client.deleteNotification(receiptId, signal)
+      await client.deleteNotification(receiptId, signal)
       if (signal.aborted) return
-      if (!deleted) throw new GreenApiError('server')
     } catch (error) {
       if (signal.aborted) return
+      // Отмена без нашего сигнала — обрыв транспорта, а не выход из цикла.
       const err =
-        error instanceof GreenApiError ? error : new GreenApiError('network')
-      if (err.kind === 'aborted') return
-      if (
-        err.kind === 'auth' ||
-        err.kind === 'webhookSet' ||
-        err.kind === 'quota' ||
-        err.kind === 'badRequest'
-      ) {
+        error instanceof GreenApiError && error.kind !== 'aborted'
+          ? error
+          : new GreenApiError('network')
+      if (STOP_KINDS.has(err.kind)) {
         handlers.onStatus('stopped', err)
         return
       }
       status = 'reconnecting'
       handlers.onStatus(status, err)
       await pause(backoffMs, signal)
-      backoffMs = Math.min(backoffMs * 2, maxBackoffMs)
+      backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS)
     }
   }
 }
