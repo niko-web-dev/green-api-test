@@ -9,6 +9,7 @@ import {
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import App from './App'
+import chatStyles from './components/ChatWindow.module.css'
 import { GreenApiError } from './api/greenApiClient'
 import type { ReceivedNotification } from './api/types'
 import { makeStore } from './store'
@@ -17,6 +18,11 @@ import { loggedOut } from './store/sessionSlice'
 import { createFakeClient } from './test/fakeClient'
 import { MESSENGERS } from './messengers'
 import incomingText from './test/fixtures/max.docs.incoming-text.json'
+import telegramDelivered from './test/fixtures/telegram.live.outgoing-message-status.json'
+import telegramRead from './test/fixtures/telegram.live.outgoing-message-status-read.json'
+import whatsappSent from './test/fixtures/whatsapp.live.outgoing-message-status-sent.json'
+import whatsappDelivered from './test/fixtures/whatsapp.live.outgoing-message-status.json'
+import whatsappRead from './test/fixtures/whatsapp.live.outgoing-message-status-read.json'
 import resolvedAccount from './test/fixtures/max.docs.check-account.json'
 
 const stores: AppStore[] = []
@@ -363,3 +369,85 @@ test('выход во время ожидания очищает перепис�
     false,
   )
 })
+
+test.each([
+  ['Telegram', [telegramDelivered, telegramRead]],
+  ['WhatsApp', [whatsappSent, whatsappDelivered, whatsappRead]],
+] as const)(
+  'статусы %s проходят из очереди в интерфейс без отката',
+  async (messenger, notifications) => {
+    const context = setup()
+    await context.user.click(screen.getByRole('button', { name: messenger }))
+    await login(context)
+    if (messenger === 'Telegram') await openChat(context)
+    else {
+      await context.user.type(
+        screen.getByRole('textbox', { name: 'Новый чат' }),
+        phone,
+      )
+      await context.user.click(
+        screen.getByRole('button', { name: 'Открыть чат' }),
+      )
+      expect(
+        await screen.findByRole('heading', { name: `+${phone}` }),
+      ).toBeInTheDocument()
+    }
+    await context.user.type(
+      screen.getByRole('textbox', { name: 'Сообщение' }),
+      'Проверка доставки',
+    )
+    await context.user.click(
+      screen.getByRole('button', { name: 'Отправить сообщение' }),
+    )
+    expect(await feed().findByLabelText(sentLabel)).toHaveTextContent('✓')
+    expect(feed().getByLabelText(sentLabel)).toHaveClass(
+      chatStyles.deliveryStatus!,
+    )
+
+    for (const notification of notifications) {
+      await act(async () =>
+        context.notify({
+          ...notification,
+          body: { ...notification.body, idMessage: 'sent-1' },
+        }),
+      )
+      const label =
+        notification.body.status === 'sent'
+          ? sentLabel
+          : notification.body.status === 'delivered'
+            ? 'Доставлено'
+            : 'Прочитано'
+      const indicator = await feed().findByLabelText(label)
+      expect(indicator).toHaveTextContent(
+        notification.body.status === 'sent' ? '✓' : '✓✓',
+      )
+      expect(indicator).toHaveClass(
+        notification.body.status === 'read'
+          ? chatStyles.readStatus!
+          : chatStyles.deliveryStatus!,
+      )
+      await waitFor(() =>
+        expect(context.client.deleteNotification).toHaveBeenCalledWith(
+          notification.receiptId,
+          expect.any(AbortSignal),
+        ),
+      )
+    }
+
+    await act(async () =>
+      context.notify({
+        receiptId: 9000,
+        body: { ...notifications[0].body, idMessage: 'sent-1', status: 'sent' },
+      }),
+    )
+    expect(feed().getByLabelText('Прочитано')).toHaveTextContent('✓✓')
+    expect(feed().getAllByRole('listitem')).toHaveLength(1)
+    expect(context.store.getState().session.warning).toBeNull()
+    await waitFor(() =>
+      expect(context.client.deleteNotification).toHaveBeenCalledWith(
+        9000,
+        expect.any(AbortSignal),
+      ),
+    )
+  },
+)

@@ -9,13 +9,47 @@ export interface IncomingText {
   typeInstance: string
 }
 
+export type DeliveryStatus = 'sent' | 'delivered' | 'read'
+
+export interface OutgoingMessageStatus {
+  chatId: string
+  idMessage: string
+  status: DeliveryStatus
+  timestamp: number
+  typeInstance: string
+}
+
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0
 }
 
-export function parseNotification(body: unknown): IncomingText | null {
-  if (!isRecord(body) || body.typeWebhook !== 'incomingMessageReceived')
-    return null
+export function parseNotification(
+  body: unknown,
+): IncomingText | OutgoingMessageStatus | null {
+  if (!isRecord(body)) return null
+  if (body.typeWebhook === 'outgoingMessageStatus') {
+    const { chatId, idMessage, status, timestamp, instanceData } = body
+    if (
+      !isRecord(instanceData) ||
+      !isNonEmptyString(instanceData.typeInstance) ||
+      !isNonEmptyString(chatId) ||
+      !isNonEmptyString(idMessage) ||
+      typeof status !== 'string' ||
+      (status !== 'sent' && status !== 'delivered' && status !== 'read') ||
+      typeof timestamp !== 'number' ||
+      !Number.isFinite(timestamp) ||
+      timestamp < 0
+    )
+      return null
+    return {
+      chatId,
+      idMessage,
+      status,
+      timestamp,
+      typeInstance: instanceData.typeInstance,
+    }
+  }
+  if (body.typeWebhook !== 'incomingMessageReceived') return null
 
   const { senderData, instanceData, messageData, idMessage, timestamp } = body
   if (
