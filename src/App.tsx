@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { Provider } from 'react-redux'
 import { store, useAppDispatch, useAppSelector } from './store'
+import type { AppStore } from './store'
 import { selectSession } from './store/sessionSlice'
 import { restoreSession } from './store/thunks'
 import LoginScreen from './components/LoginScreen'
@@ -20,9 +21,11 @@ function Screens() {
   return current ? <ChatLayout /> : <LoginScreen />
 }
 
-export default function App() {
+export default function App({
+  store: customStore = store,
+}: { store?: AppStore } = {}) {
   return (
-    <Provider store={store}>
+    <Provider store={customStore}>
       <Screens />
     </Provider>
   )
