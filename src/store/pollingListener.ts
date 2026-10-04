@@ -3,7 +3,7 @@ import { describeError } from '../api/greenApiClient'
 import { MESSENGERS } from '../messengers'
 import { parseNotification } from '../notifications'
 import { runNotificationLoop } from '../notificationLoop'
-import { incomingReceived } from './chatsSlice'
+import { incomingReceived, messageStatusUpdated } from './chatsSlice'
 import {
   sessionStarted,
   loggedOut,
@@ -48,7 +48,9 @@ export function createPollingListener(extra: StoreExtra) {
                     }),
                   )
                 }
-                api.dispatch(incomingReceived({ ...parsed, sessionId }))
+                if ('status' in parsed)
+                  api.dispatch(messageStatusUpdated({ ...parsed, sessionId }))
+                else api.dispatch(incomingReceived({ ...parsed, sessionId }))
               },
               onStatus(status, error) {
                 api.dispatch(

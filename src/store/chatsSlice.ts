@@ -1,6 +1,6 @@
 import { createSlice, createSelector, isAnyOf } from '@reduxjs/toolkit'
 import type { PayloadAction } from '@reduxjs/toolkit'
-import type { IncomingText } from '../notifications'
+import type { DeliveryStatus, IncomingText } from '../notifications'
 import { sessionStarted, loggedOut } from './sessionSlice'
 import type { SessionScope, StoreState } from './types'
 import type { openChat, sendMessage } from './thunks'
@@ -18,7 +18,7 @@ export interface Message {
   direction: 'in' | 'out'
   text: string
   timestamp: number
-  status: 'sending' | 'sent' | 'failed' | 'unknown'
+  status: 'sending' | 'sent' | 'delivered' | 'read' | 'failed' | 'unknown'
   idMessage?: string
   error?: string
 }
@@ -39,6 +39,15 @@ const initialState: ChatsState = {
   messagesByChat: {},
   seenMessageIds: {},
   error: null,
+}
+
+const statusRank: Record<Message['status'], number> = {
+  sending: 0,
+  failed: 0,
+  unknown: 0,
+  sent: 1,
+  delivered: 2,
+  read: 3,
 }
 
 const slice = createSlice({
@@ -74,6 +83,25 @@ const slice = createSlice({
         status: 'sent',
       })
       messages.sort((a, b) => a.timestamp - b.timestamp)
+    },
+    messageStatusUpdated(
+      state,
+      action: PayloadAction<
+        { idMessage: string; status: DeliveryStatus } & Partial<SessionScope>
+      >,
+    ) {
+      const { idMessage, status } = action.payload
+      for (const messages of Object.values(state.messagesByChat)) {
+        const message = messages.find(
+          (m) => m.direction === 'out' && m.idMessage === idMessage,
+        )
+        if (!message) continue
+        if (statusRank[status] > statusRank[message.status]) {
+          message.status = status
+          delete message.error
+        }
+        return
+      }
     },
     outgoingStarted(
       state,
@@ -126,7 +154,8 @@ const slice = createSlice({
         const { chatId, key, idMessage } = action.payload
         const message = state.messagesByChat[chatId]?.find((m) => m.key === key)
         if (!message) return
-        message.status = 'sent'
+        if (statusRank[message.status] < statusRank.sent)
+          message.status = 'sent'
         message.idMessage = idMessage
         delete message.error
       },
@@ -160,7 +189,12 @@ const slice = createSlice({
   },
 })
 
-export const { incomingReceived, outgoingStarted, chatSelected } = slice.actions
+export const {
+  incomingReceived,
+  outgoingStarted,
+  chatSelected,
+  messageStatusUpdated,
+} = slice.actions
 export default slice.reducer
 
 export const selectChatList = createSelector(

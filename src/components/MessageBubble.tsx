@@ -8,10 +8,19 @@ import styles from './ChatWindow.module.css'
 const labels = {
   sending: 'Отправляется',
   sent: 'Принято API, доставка не подтверждена',
+  delivered: 'Доставлено',
+  read: 'Прочитано',
   failed: 'Не отправлено',
   unknown: 'Отправка не подтверждена',
 }
-const symbols = { sending: '◷', sent: '✓', failed: '!', unknown: '!' }
+const symbols = {
+  sending: '◷',
+  sent: '✓',
+  delivered: '✓✓',
+  read: '✓✓',
+  failed: '!',
+  unknown: '!',
+}
 export default function MessageBubble({ message }: { message: Message }) {
   const dispatch = useAppDispatch()
   const sessionId = useAppSelector(selectSessionId)
@@ -28,6 +37,13 @@ export default function MessageBubble({ message }: { message: Message }) {
         </time>
         {outgoing && (
           <span
+            className={
+              message.status === 'read'
+                ? styles.readStatus
+                : ['sent', 'delivered'].includes(message.status)
+                  ? styles.deliveryStatus
+                  : undefined
+            }
             aria-label={labels[message.status]}
             title={labels[message.status]}
           >

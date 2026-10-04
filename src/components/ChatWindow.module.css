@@ -92,6 +92,12 @@
   color: #2766bd;
   font-size: 13px;
 }
+.meta .deliveryStatus {
+  color: #8491a3;
+}
+.meta .readStatus {
+  color: #1550aa;
+}
 .failure {
   border-top: 1px solid #b5cce7;
   margin-top: 8px;

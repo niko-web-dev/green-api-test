@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parseNotification } from './notifications'
-import type { IncomingText } from './notifications'
+import type { IncomingText, OutgoingMessageStatus } from './notifications'
 
 const fixtures = import.meta.glob<unknown>('./test/fixtures/*.json', {
   eager: true,
@@ -8,7 +8,10 @@ const fixtures = import.meta.glob<unknown>('./test/fixtures/*.json', {
 })
 
 const title = 'Тестовый Получатель'
-const expectedFixtures: Record<string, IncomingText | null> = {
+const expectedFixtures: Record<
+  string,
+  IncomingText | OutgoingMessageStatus | null
+> = {
   'max.docs.incoming-text.json': {
     chatId: '10000002',
     idMessage: '1763115112345',
@@ -71,15 +74,45 @@ const expectedFixtures: Record<string, IncomingText | null> = {
   'telegram.live.send-message.json': null,
   'telegram.live.receive-empty.json': null,
   'telegram.live.outgoing-api-message.json': null,
-  'telegram.live.outgoing-message-status.json': null,
-  'telegram.live.outgoing-message-status-read.json': null,
+  'telegram.live.outgoing-message-status.json': {
+    chatId: '10000002',
+    idMessage: '1790000000001',
+    status: 'delivered',
+    timestamp: 1790944922,
+    typeInstance: 'telegram',
+  },
+  'telegram.live.outgoing-message-status-read.json': {
+    chatId: '10000002',
+    idMessage: '1790000000001',
+    status: 'read',
+    timestamp: 1790944928,
+    typeInstance: 'telegram',
+  },
   'whatsapp.live.check-account.json': null,
   'whatsapp.live.send-message.json': null,
   'whatsapp.live.receive-empty.json': null,
   'whatsapp.live.outgoing-api-message.json': null,
-  'whatsapp.live.outgoing-message-status.json': null,
-  'whatsapp.live.outgoing-message-status-sent.json': null,
-  'whatsapp.live.outgoing-message-status-read.json': null,
+  'whatsapp.live.outgoing-message-status.json': {
+    chatId: '79990000002@c.us',
+    idMessage: '3EB0000000000000000001',
+    status: 'delivered',
+    timestamp: 1791014912,
+    typeInstance: 'whatsapp',
+  },
+  'whatsapp.live.outgoing-message-status-sent.json': {
+    chatId: '79990000002@c.us',
+    idMessage: '3EB0000000000000000001',
+    status: 'sent',
+    timestamp: 1791014908,
+    typeInstance: 'whatsapp',
+  },
+  'whatsapp.live.outgoing-message-status-read.json': {
+    chatId: '79990000002@c.us',
+    idMessage: '3EB0000000000000000001',
+    status: 'read',
+    timestamp: 1791014951,
+    typeInstance: 'whatsapp',
+  },
 }
 
 function validBody(typeMessage = 'textMessage') {
@@ -161,14 +194,70 @@ describe('Разбор уведомлений', () => {
     ['', 'Отправитель', 'Отправитель'],
     ['', '', '10000002'],
   ])('выбирает имя чата %#', (chatName, senderName, expected) => {
-    expect(
-      parseNotification({
-        ...validBody(),
-        senderData: { chatId: '10000002', chatName, senderName },
-      })?.chatName,
-    ).toBe(expected)
+    const parsed = parseNotification({
+      ...validBody(),
+      senderData: { chatId: '10000002', chatName, senderName },
+    })
+    expect(parsed && 'chatName' in parsed ? parsed.chatName : undefined).toBe(
+      expected,
+    )
   })
   it.each(['imageMessage', 'unknown'])('игнорирует тип %s', (typeMessage) => {
     expect(parseNotification(validBody(typeMessage))).toBeNull()
+  })
+})
+
+describe('Разбор статусов доставки', () => {
+  const body = {
+    typeWebhook: 'outgoingMessageStatus',
+    chatId: '10000002',
+    idMessage: 'message-1',
+    status: 'sent',
+    timestamp: 1790944940,
+    instanceData: { typeInstance: 'telegram' },
+  }
+
+  it.each(['sent', 'delivered', 'read'])('распознаёт статус %s', (status) => {
+    expect(parseNotification({ ...body, status })).toEqual({
+      chatId: body.chatId,
+      idMessage: body.idMessage,
+      status,
+      timestamp: body.timestamp,
+      typeInstance: 'telegram',
+    })
+  })
+
+  it.each([
+    { chatId: undefined },
+    { chatId: '' },
+    { chatId: '   ' },
+    { chatId: 123 },
+    { idMessage: null },
+    { idMessage: '' },
+    { idMessage: '   ' },
+    { idMessage: 123 },
+    { status: undefined },
+    { status: 123 },
+    { status: 'failed' },
+    { status: 'unknown' },
+    { status: 'READ' },
+    { status: ' read ' },
+    { timestamp: undefined },
+    { timestamp: '123' },
+    { timestamp: -1 },
+    { timestamp: NaN },
+    { timestamp: Infinity },
+    { instanceData: null },
+    { instanceData: [] },
+    { instanceData: {} },
+    { instanceData: { typeInstance: '' } },
+    { instanceData: { typeInstance: '   ' } },
+    { instanceData: { typeInstance: 123 } },
+  ])('отклоняет повреждённое поле %#', (patch) => {
+    expect(parseNotification({ ...body, ...patch })).toBeNull()
+  })
+
+  it('принимает нулевую временную отметку', () => {
+    expect(parseNotification({ ...body, timestamp: 0 })).not.toBeNull()
   })
 })
