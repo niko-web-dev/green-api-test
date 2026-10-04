@@ -1,26 +1,19 @@
 import { act, cleanup, render, screen, within } from '@testing-library/react'
 import { Provider } from 'react-redux'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { GreenApiError } from '../api/greenApiClient'
+import { createGreenApiError } from '../api/errors'
+import { createFakeClient } from '../api/fakeClient'
 import ChatLayout from '../components/ChatLayout'
-import { createFakeClient } from '../test/fakeClient'
 import { makeStore } from './index'
-import type { AppStore } from './index'
+import type { LockRequest } from './pollingListener.test.types'
 import { loggedOut, sessionStarted } from './sessionSlice'
-import type { Session } from './sessionSlice'
+import type { AppStore, Session } from './types'
 
 const warning = 'Инстанс открыт в другой вкладке: новые сообщения приходят туда'
 
 function fakeLocks() {
-  type Request = {
-    callback: (lock: Lock | null) => Promise<void>
-    resolve: () => void
-    reject: (reason: unknown) => void
-    signal?: AbortSignal
-    abort: () => void
-  }
   const held = new Set<string>()
-  const queues = new Map<string, Request[]>()
+  const queues = new Map<string, LockRequest[]>()
 
   function grant(name: string) {
     if (held.has(name)) return
@@ -52,7 +45,7 @@ function fakeLocks() {
       return new Promise<void>((resolve, reject) => {
         const queue = queues.get(name) ?? []
         queues.set(name, queue)
-        const pending: Request = {
+        const pending: LockRequest = {
           callback,
           resolve,
           reject,
@@ -215,7 +208,7 @@ describe('Монопольное получение уведомлений', () 
   it('ошибка опроса освобождает замок для следующей вкладки', async () => {
     const first = tab()
     first.client.receiveNotification.mockRejectedValueOnce(
-      new GreenApiError('auth'),
+      createGreenApiError('auth'),
     )
     const second = tab(first.session)
     await flush()

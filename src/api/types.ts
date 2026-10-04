@@ -25,3 +25,49 @@ export interface CheckWhatsappResponse {
 export interface SendMessageResponse {
   idMessage: string
 }
+
+export type GreenApiErrorKind =
+  | 'auth'
+  | 'notReady'
+  | 'phoneCheckLimit'
+  | 'quota'
+  | 'rateLimit'
+  | 'webhookSet'
+  | 'badRequest'
+  | 'server'
+  | 'network'
+  | 'aborted'
+
+export interface GreenApiClient {
+  getStateInstance(signal?: AbortSignal): Promise<string>
+  checkAccount(
+    phone: number,
+    signal?: AbortSignal,
+  ): Promise<CheckAccountResponse>
+  checkWhatsapp(
+    phone: number,
+    signal?: AbortSignal,
+  ): Promise<CheckWhatsappResponse>
+  sendMessage(
+    chatId: string,
+    message: string,
+    signal?: AbortSignal,
+  ): Promise<SendMessageResponse>
+  receiveNotification(
+    timeoutSec: number,
+    signal?: AbortSignal,
+  ): Promise<ReceivedNotification | null>
+  deleteNotification(receiptId: number, signal?: AbortSignal): Promise<void>
+}
+
+export interface GreenApiError extends Error {
+  kind: GreenApiErrorKind
+  status?: number
+}
+
+export interface RequestOptions {
+  verb?: string
+  body?: unknown
+  suffix?: string
+  timeoutMs?: number
+}

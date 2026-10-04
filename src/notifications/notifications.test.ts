@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { parseNotification } from './notifications'
-import type { IncomingText, OutgoingMessageStatus } from './notifications'
+import type { IncomingText, OutgoingMessageStatus } from './types'
 
-const fixtures = import.meta.glob<unknown>('./test/fixtures/*.json', {
+const fixtures = import.meta.glob<unknown>('../fixtures/*.json', {
   eager: true,
   import: 'default',
 })

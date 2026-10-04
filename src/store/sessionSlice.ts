@@ -1,24 +1,14 @@
-import { createSlice } from '@reduxjs/toolkit'
 import type { PayloadAction } from '@reduxjs/toolkit'
-import type { Credentials } from '../api/types'
-import { MESSENGERS } from '../messengers'
-import type { MessengerId } from '../messengers'
-import type { SessionScope, StoreState } from './types'
+import { createSlice } from '@reduxjs/toolkit'
+import { MESSENGERS } from '../messengers/messengers'
 import type { login } from './thunks'
-
-export interface Session {
-  messenger: MessengerId
-  credentials: Credentials
-}
-
-export interface SessionState {
-  current: Session | null
-  sessionId: number
-  connection: 'idle' | 'online' | 'reconnecting' | 'error' | 'standby'
-  error: string | null
-  warning: string | null
-  loginRequestId: string | null
-}
+import type {
+  ConnectionChangedPayload,
+  Session,
+  SessionState,
+  StoreState,
+  WarningChangedPayload,
+} from './types'
 
 const initialState: SessionState = {
   current: null,
@@ -83,22 +73,11 @@ const slice = createSlice({
       // Счётчик нельзя обнулять: иначе поздний ответ до выхода совпадёт с новой сессией.
       sessionId: state.sessionId + 1,
     }),
-    connectionChanged(
-      state,
-      action: PayloadAction<
-        SessionScope & {
-          connection: SessionState['connection']
-          error?: string | null
-        }
-      >,
-    ) {
+    connectionChanged(state, action: PayloadAction<ConnectionChangedPayload>) {
       state.connection = action.payload.connection
       state.error = action.payload.error ?? null
     },
-    warningChanged(
-      state,
-      action: PayloadAction<SessionScope & { warning: string | null }>,
-    ) {
+    warningChanged(state, action: PayloadAction<WarningChangedPayload>) {
       state.warning = action.payload.warning
     },
   },

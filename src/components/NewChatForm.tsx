@@ -1,11 +1,15 @@
-import { useState } from 'react'
 import type { FormEvent } from 'react'
-import { normalizePhone, PHONE_HINT, validatePhone } from '../messengers'
+import { useState } from 'react'
+import {
+  normalizePhone,
+  PHONE_HINT,
+  validatePhone,
+} from '../messengers/messengers'
 import { useAppDispatch, useAppSelector } from '../store'
 import { selectSessionId } from '../store/sessionSlice'
 import { openChat } from '../store/thunks'
-import Icon from './Icon'
 import styles from './ChatList.module.css'
+import Icon from './Icon'
 
 export default function NewChatForm() {
   const dispatch = useAppDispatch()

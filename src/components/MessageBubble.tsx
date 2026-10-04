@@ -1,9 +1,9 @@
-import type { Message } from '../store/chatsSlice'
 import { useAppDispatch, useAppSelector } from '../store'
 import { selectSessionId } from '../store/sessionSlice'
 import { retrySend } from '../store/thunks'
-import { formatTime } from './formatTime'
 import styles from './ChatWindow.module.css'
+import { formatTime } from './formatTime'
+import type { MessageBubbleProps } from './types'
 
 const labels = {
   sending: 'Отправляется',
@@ -21,7 +21,7 @@ const symbols = {
   failed: '!',
   unknown: '!',
 }
-export default function MessageBubble({ message }: { message: Message }) {
+export default function MessageBubble({ message }: MessageBubbleProps) {
   const dispatch = useAppDispatch()
   const sessionId = useAppSelector(selectSessionId)
   const outgoing = message.direction === 'out'

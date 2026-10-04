@@ -1,26 +1,26 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { GreenApiError, describeError } from '../api/greenApiClient'
-import { createFakeClient } from '../test/fakeClient'
+import { createGreenApiError, describeError } from '../api/errors'
+import { createFakeClient } from '../api/fakeClient'
 import type { Credentials, ReceivedNotification } from '../api/types'
-import type { MessengerId } from '../messengers'
-import { MESSENGERS } from '../messengers'
+import { MESSENGERS } from '../messengers/messengers'
+import type { MessengerId } from '../messengers/types'
+import type { IncomingText } from '../notifications/types'
+import { incomingReceived, selectChatList } from './chatsSlice'
 import { makeStore } from './index'
 import {
-  sessionStarted,
+  connectionChanged,
   loggedOut,
   SESSION_STORAGE_KEY,
-  connectionChanged,
+  sessionStarted,
   warningChanged,
 } from './sessionSlice'
-import { incomingReceived, selectChatList } from './chatsSlice'
 import {
   login,
-  restoreSession,
   openChat,
-  sendMessage,
+  restoreSession,
   retrySend,
+  sendMessage,
 } from './thunks'
-import type { IncomingText } from '../notifications'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -60,7 +60,7 @@ function setup(messenger: MessengerId = 'telegram', start = true) {
     return new Promise((_resolve, reject) => {
       const abort = () => {
         activeReceives--
-        reject(new GreenApiError('aborted'))
+        reject(createGreenApiError('aborted'))
       }
       if (signal.aborted) abort()
       else signal.addEventListener('abort', abort, { once: true })
@@ -149,10 +149,10 @@ describe('Вход и восстановление', () => {
     'возвращает безопасную ошибку %s',
     async (kind) => {
       const { store, client, session } = setup('telegram', false)
-      client.getStateInstance.mockRejectedValue(new GreenApiError(kind))
+      client.getStateInstance.mockRejectedValue(createGreenApiError(kind))
       await store.dispatch(login({ ...session, sessionId: sid(store) }))
       expect(store.getState().session.error).toBe(
-        describeError(new GreenApiError(kind)),
+        describeError(createGreenApiError(kind)),
       )
       expect(client.receiveNotification).not.toHaveBeenCalled()
     },
@@ -269,12 +269,12 @@ describe('Открытие чата', () => {
 
   it.each(['phoneCheckLimit'] as const)('объясняет ошибку %s', async (kind) => {
     const { store, client } = setup()
-    client.checkAccount.mockRejectedValue(new GreenApiError(kind))
+    client.checkAccount.mockRejectedValue(createGreenApiError(kind))
     await store.dispatch(
       openChat({ sessionId: sid(store), phoneInput: '79990000002' }),
     )
     expect(store.getState().chats.error).toBe(
-      describeError(new GreenApiError(kind)),
+      describeError(createGreenApiError(kind)),
     )
     expect(selectChatList(store.getState()).map((c) => c.chatId)).toEqual([])
   })
@@ -323,7 +323,7 @@ describe('Отправка', () => {
       await store.dispatch(
         openChat({ sessionId: sid(store), phoneInput: '79990000002' }),
       )
-      client.sendMessage.mockRejectedValueOnce(new GreenApiError(kind))
+      client.sendMessage.mockRejectedValueOnce(createGreenApiError(kind))
       await store.dispatch(
         sendMessage({
           sessionId: sid(store),
@@ -336,7 +336,7 @@ describe('Отправка', () => {
         text: 'Текст',
         error:
           kind === 'badRequest'
-            ? describeError(new GreenApiError(kind))
+            ? describeError(createGreenApiError(kind))
             : 'Не удалось подтвердить отправку. Ручной повтор может создать дубликат.',
       })
       expect(store.getState().chats.error).toBeNull()
@@ -401,7 +401,7 @@ describe('Отправка', () => {
       await store.dispatch(
         openChat({ sessionId: sid(store), phoneInput: '79990000002' }),
       )
-      client.sendMessage.mockRejectedValueOnce(new GreenApiError(kind))
+      client.sendMessage.mockRejectedValueOnce(createGreenApiError(kind))
       await store.dispatch(
         sendMessage({
           sessionId: sid(store),
@@ -646,12 +646,14 @@ describe('Получение через листенер', () => {
     'отображает остановку по %s',
     async (kind) => {
       const { store, client, session } = setup('telegram', false)
-      client.receiveNotification.mockRejectedValueOnce(new GreenApiError(kind))
+      client.receiveNotification.mockRejectedValueOnce(
+        createGreenApiError(kind),
+      )
       store.dispatch(sessionStarted(session))
       await flush()
       expect(store.getState().session.connection).toBe('error')
       expect(store.getState().session.error).toBe(
-        describeError(new GreenApiError(kind)),
+        describeError(createGreenApiError(kind)),
       )
     },
   )
@@ -659,7 +661,7 @@ describe('Получение через листенер', () => {
   it('показывает переподключение, затем восстановление', async () => {
     const { store, client, session } = setup('telegram', false)
     client.receiveNotification
-      .mockRejectedValueOnce(new GreenApiError('network'))
+      .mockRejectedValueOnce(createGreenApiError('network'))
       .mockResolvedValueOnce(null)
     store.dispatch(sessionStarted(session))
     await flush()
@@ -748,11 +750,11 @@ describe('Восстановление и открытие', () => {
     const { session } = setup()
     sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session))
     const { store, client } = setup('telegram', false)
-    client.getStateInstance.mockRejectedValueOnce(new GreenApiError('auth'))
+    client.getStateInstance.mockRejectedValueOnce(createGreenApiError('auth'))
     await store.dispatch(restoreSession())
     expect(sessionStorage.getItem(SESSION_STORAGE_KEY)).toBeNull()
     expect(store.getState().session.error).toBe(
-      describeError(new GreenApiError('auth')),
+      describeError(createGreenApiError('auth')),
     )
   })
 
@@ -785,7 +787,7 @@ describe('Восстановление и открытие', () => {
     await store.dispatch(
       login({ ...session, messenger: 'max', sessionId: sid(store) }),
     )
-    old.reject(new GreenApiError('network'))
+    old.reject(createGreenApiError('network'))
     await restoring
     expect(
       JSON.parse(sessionStorage.getItem(SESSION_STORAGE_KEY)!).messenger,
@@ -841,12 +843,12 @@ describe('Очередь и восстановление после обрыва
     const event = queuedText(1)
     client.receiveNotification.mockResolvedValueOnce(event)
     client.deleteNotification.mockRejectedValueOnce(
-      new GreenApiError('network'),
+      createGreenApiError('network'),
     )
     // Последующие receive выполнятся на 1, 3, 7 и 15 секундах; сеть вернётся на 30-й.
     for (let i = 0; i < 4; i++)
       client.receiveNotification.mockRejectedValueOnce(
-        new GreenApiError('network'),
+        createGreenApiError('network'),
       )
     client.receiveNotification
       .mockResolvedValueOnce(event)
@@ -890,7 +892,7 @@ describe('Очередь и восстановление после обрыва
       try {
         if (phase === 'пауза')
           client.receiveNotification.mockRejectedValueOnce(
-            new GreenApiError('network'),
+            createGreenApiError('network'),
           )
         store.dispatch(sessionStarted(session))
         store.dispatch(incomingReceived(incoming(sid(store))))
