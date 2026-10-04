@@ -62,6 +62,7 @@ export function makeStore(
 }
 
 export const store = makeStore()
+export type AppStore = ReturnType<typeof makeStore>
 export type RootState = StoreState
 export type AppDispatch = typeof store.dispatch
 export const useAppDispatch = useDispatch.withTypes<AppDispatch>()
