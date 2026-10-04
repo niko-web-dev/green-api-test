@@ -12,6 +12,7 @@ const connectionLabels = {
   online: 'На связи',
   reconnecting: 'Переподключение',
   error: 'Ошибка соединения',
+  standby: 'В другой вкладке',
 }
 export default function ChatList() {
   const dispatch = useAppDispatch()

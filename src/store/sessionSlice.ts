@@ -14,7 +14,7 @@ export interface Session {
 export interface SessionState {
   current: Session | null
   sessionId: number
-  connection: 'idle' | 'online' | 'reconnecting' | 'error'
+  connection: 'idle' | 'online' | 'reconnecting' | 'error' | 'standby'
   error: string | null
   warning: string | null
   loginRequestId: string | null
