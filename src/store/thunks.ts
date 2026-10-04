@@ -1,16 +1,29 @@
 import { createAsyncThunk } from '@reduxjs/toolkit'
-import { GreenApiError, describeError } from '../api/greenApiClient'
-import { MESSENGERS, normalizePhone, validatePhone } from '../messengers'
-import { readSession, saveSession, sessionStarted } from './sessionSlice'
-import type { Session } from './sessionSlice'
+import { describeError, isGreenApiError } from '../api/errors'
+import {
+  MESSENGERS,
+  normalizePhone,
+  validatePhone,
+} from '../messengers/messengers'
 import { outgoingStarted } from './chatsSlice'
-import type { Chat } from './chatsSlice'
-import type { StoreState, StoreExtra, SessionScope, AppThunk } from './types'
+import { readSession, saveSession, sessionStarted } from './sessionSlice'
+import type {
+  AppThunk,
+  Chat,
+  LoginArg,
+  OpenChatArg,
+  OperationConfig,
+  RetrySendArg,
+  SendArg,
+  SendConfig,
+  SendResult,
+  SessionConditionApi,
+  SessionScope,
+} from './types'
 
-type Config = { state: StoreState; extra: StoreExtra; rejectValue: string }
-const createOperation = createAsyncThunk.withTypes<Config>()
+const createOperation = createAsyncThunk.withTypes<OperationConfig>()
 const currentSessionOnly = {
-  condition: (arg: SessionScope, api: { getState(): StoreState }) =>
+  condition: (arg: SessionScope, api: SessionConditionApi) =>
     arg.sessionId === api.getState().session.sessionId,
 }
 
@@ -24,7 +37,7 @@ const stateErrors: Record<string, string> = {
     'Работа аккаунта ограничена. Проверьте состояние в кабинете GREEN-API.',
 }
 
-export const login = createOperation<void, Session & SessionScope>(
+export const login = createOperation<void, LoginArg>(
   'session/login',
   async (arg, api) => {
     try {
@@ -73,10 +86,7 @@ export const restoreSession =
       saveSession(null)
   }
 
-export const openChat = createOperation<
-  Chat,
-  SessionScope & { phoneInput: string }
->(
+export const openChat = createOperation<Chat, OpenChatArg>(
   'chats/open',
   async (arg, api) => {
     const current = api.getState().session.current
@@ -109,19 +119,7 @@ export const openChat = createOperation<
   },
   currentSessionOnly,
 )
-
-type SendArg = SessionScope & {
-  chatId: string
-  text: string
-  // Передаёт только retrySend, проверив, что повтор допустим.
-  retryKey?: string
-}
-type SendError = { status: 'failed' | 'unknown'; error: string }
-export const sendMessage = createAsyncThunk<
-  { chatId: string; key: string; idMessage: string },
-  SendArg,
-  { state: StoreState; extra: StoreExtra; rejectValue: SendError }
->(
+export const sendMessage = createAsyncThunk<SendResult, SendArg, SendConfig>(
   'chats/send',
   async (arg, api) => {
     const current = api.getState().session.current
@@ -171,8 +169,7 @@ export const sendMessage = createAsyncThunk<
     } catch (error) {
       const uncertain =
         submitted &&
-        (!(error instanceof GreenApiError) ||
-          ['network', 'aborted'].includes(error.kind))
+        (!isGreenApiError(error) || ['network', 'aborted'].includes(error.kind))
       return api.rejectWithValue({
         status: uncertain ? 'unknown' : 'failed',
         error: uncertain
@@ -184,7 +181,7 @@ export const sendMessage = createAsyncThunk<
   currentSessionOnly,
 )
 
-export const retrySend = createOperation<void, SessionScope & { key: string }>(
+export const retrySend = createOperation<void, RetrySendArg>(
   'chats/retry',
   async (arg, api) => {
     const message = Object.values(api.getState().chats.messagesByChat)

@@ -1,11 +1,11 @@
-import { MESSENGERS } from '../messengers'
+import { MESSENGERS } from '../messengers/messengers'
 import { useAppDispatch, useAppSelector } from '../store'
-import { loggedOut, selectSession } from '../store/sessionSlice'
 import { chatSelected, selectChatList } from '../store/chatsSlice'
-import NewChatForm from './NewChatForm'
-import Icon from './Icon'
-import { formatTime } from './formatTime'
+import { loggedOut, selectSession } from '../store/sessionSlice'
 import styles from './ChatList.module.css'
+import Icon from './Icon'
+import NewChatForm from './NewChatForm'
+import { formatTime } from './formatTime'
 
 const connectionLabels = {
   idle: 'Подключаемся',

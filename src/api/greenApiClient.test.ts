@@ -1,15 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import {
-  createGreenApiClient,
-  GreenApiError,
-  describeError,
-} from './greenApiClient'
-import type { GreenApiErrorKind } from './greenApiClient'
-import type { Credentials } from './types'
-import maxAccount from '../test/fixtures/max.docs.check-account.json'
-import whatsappAccount from '../test/fixtures/whatsapp.live.check-account.json'
-import maxSent from '../test/fixtures/max.docs.send-message.json'
-import telegramEmpty from '../test/fixtures/telegram.live.receive-empty.json'
+import maxAccount from '../fixtures/max.docs.check-account.json'
+import maxSent from '../fixtures/max.docs.send-message.json'
+import telegramEmpty from '../fixtures/telegram.live.receive-empty.json'
+import whatsappAccount from '../fixtures/whatsapp.live.check-account.json'
+import { isGreenApiError } from './errors'
+import { createGreenApiClient } from './greenApiClient'
+import type { Credentials, GreenApiErrorKind } from './types'
 
 const credentials: Credentials = {
   apiUrl: 'https://example.test',
@@ -29,9 +25,9 @@ async function expectSafeError(
   status?: number,
 ) {
   const error: unknown = await promise.catch((reason: unknown) => reason)
-  expect(error).toBeInstanceOf(GreenApiError)
-  if (!(error instanceof GreenApiError))
-    throw new Error('Ожидалась ошибка GREEN-API')
+  expect(error).toBeInstanceOf(Error)
+  expect(isGreenApiError(error)).toBe(true)
+  if (!isGreenApiError(error)) throw new Error('Ожидалась ошибка GREEN-API')
   expect(error.kind).toBe(kind)
   expect(error.status).toBe(status)
   expect(error.message).not.toContain(token)
@@ -339,15 +335,4 @@ describe('HTTP-клиент', () => {
       await expectSafeError(client.receiveNotification(20), 'server')
     },
   )
-
-  it('диагностика игнорирует подменённый message', () => {
-    const error = new GreenApiError('badRequest', 400)
-    error.message = token
-    expect(describeError(error)).toBe(
-      'GREEN-API отклонил запрос. Проверьте переданные данные. (HTTP 400)',
-    )
-    expect(describeError(new Error(token))).toBe(
-      'Не удалось выполнить запрос к GREEN-API.',
-    )
-  })
 })

@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { createFakeClient } from './test/fakeClient'
+import { createFakeClient } from '../api/fakeClient'
+import maxAccount from '../fixtures/max.docs.check-account.json'
+import telegramAccount from '../fixtures/telegram.live.check-account.json'
+import whatsappAccount from '../fixtures/whatsapp.live.check-account.json'
 import { MESSENGERS, normalizePhone, validatePhone } from './messengers'
-import type { MessengerId } from './messengers'
-import maxAccount from './test/fixtures/max.docs.check-account.json'
-import telegramAccount from './test/fixtures/telegram.live.check-account.json'
-import whatsappAccount from './test/fixtures/whatsapp.live.check-account.json'
+import type { MessengerId } from './types'
 
 describe('Нормализация телефона', () => {
   it.each([

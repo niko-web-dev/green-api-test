@@ -1,14 +1,15 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import { useStore } from 'react-redux'
-import type { RootState } from '../store'
-import { MESSENGERS } from '../messengers'
+import { MESSENGERS } from '../messengers/messengers'
 import { useAppDispatch, useAppSelector } from '../store'
 import { selectSession } from '../store/sessionSlice'
 import { sendMessage } from '../store/thunks'
-import Icon from './Icon'
+import type { RootState } from '../store/types'
 import styles from './Composer.module.css'
+import Icon from './Icon'
+import type { ComposerProps } from './types'
 
-export default function Composer({ chatId }: { chatId: string }) {
+export default function Composer({ chatId }: ComposerProps) {
   const dispatch = useAppDispatch()
   const store = useStore<RootState>()
   const { current, sessionId } = useAppSelector(selectSession)

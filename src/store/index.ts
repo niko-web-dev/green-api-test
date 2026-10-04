@@ -1,11 +1,19 @@
-import { combineReducers, configureStore, isAction } from '@reduxjs/toolkit'
 import type { Middleware, UnknownAction } from '@reduxjs/toolkit'
+import { combineReducers, configureStore, isAction } from '@reduxjs/toolkit'
 import { useDispatch, useSelector } from 'react-redux'
 import { createGreenApiClient } from '../api/greenApiClient'
-import sessionReducer, { sessionStarted, loggedOut } from './sessionSlice'
 import chatsReducer from './chatsSlice'
 import { createPollingListener } from './pollingListener'
-import type { StoreDependencies, StoreExtra, StoreState } from './types'
+import sessionReducer, { loggedOut, sessionStarted } from './sessionSlice'
+import type {
+  AppDispatch,
+  RootState,
+  ScopedActionMeta,
+  ScopedActionPayload,
+  StoreDependencies,
+  StoreExtra,
+  StoreState,
+} from './types'
 
 const combinedReducer = combineReducers({
   session: sessionReducer,
@@ -13,8 +21,8 @@ const combinedReducer = combineReducers({
 })
 
 function sessionIdOf(action: UnknownAction): unknown {
-  const meta = action.meta as { arg?: { sessionId?: unknown } } | undefined
-  const payload = action.payload as { sessionId?: unknown } | null | undefined
+  const meta = action.meta as ScopedActionMeta | undefined
+  const payload = action.payload as ScopedActionPayload | null | undefined
   return meta?.arg?.sessionId ?? payload?.sessionId
 }
 
@@ -62,8 +70,5 @@ export function makeStore(
 }
 
 export const store = makeStore()
-export type AppStore = ReturnType<typeof makeStore>
-export type RootState = StoreState
-export type AppDispatch = typeof store.dispatch
 export const useAppDispatch = useDispatch.withTypes<AppDispatch>()
 export const useAppSelector = useSelector.withTypes<RootState>()

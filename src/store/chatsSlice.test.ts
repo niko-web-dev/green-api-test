@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import type { DeliveryStatus } from '../notifications/types'
 import reducer, { messageStatusUpdated, outgoingStarted } from './chatsSlice'
-import type { Message } from './chatsSlice'
-import type { DeliveryStatus } from '../notifications'
 import { sendMessage } from './thunks'
+import type { Message } from './types'
 
 function stateWithMessage(
   status: Message['status'] = 'sent',

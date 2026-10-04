@@ -1,36 +1,15 @@
-import { createSlice, createSelector, isAnyOf } from '@reduxjs/toolkit'
 import type { PayloadAction } from '@reduxjs/toolkit'
-import type { DeliveryStatus, IncomingText } from '../notifications'
-import { sessionStarted, loggedOut } from './sessionSlice'
-import type { SessionScope, StoreState } from './types'
+import { createSelector, createSlice, isAnyOf } from '@reduxjs/toolkit'
+import { loggedOut, sessionStarted } from './sessionSlice'
 import type { openChat, sendMessage } from './thunks'
-
-export interface Chat {
-  chatId: string
-  title: string
-  phone?: string
-  lastActivity: number
-}
-
-export interface Message {
-  key: string
-  chatId: string
-  direction: 'in' | 'out'
-  text: string
-  timestamp: number
-  status: 'sending' | 'sent' | 'delivered' | 'read' | 'failed' | 'unknown'
-  idMessage?: string
-  error?: string
-}
-
-export interface ChatsState {
-  byId: Record<string, Chat>
-  openRequestId: string | null
-  activeChatId: string | null
-  messagesByChat: Record<string, Message[]>
-  seenMessageIds: Record<string, true>
-  error: string | null
-}
+import type {
+  ChatsState,
+  IncomingReceivedPayload,
+  Message,
+  MessageStatusUpdatedPayload,
+  OutgoingStartedPayload,
+  StoreState,
+} from './types'
 
 const initialState: ChatsState = {
   byId: {},
@@ -58,10 +37,7 @@ const slice = createSlice({
       if (action.payload === null || Object.hasOwn(state.byId, action.payload))
         state.activeChatId = action.payload
     },
-    incomingReceived(
-      state,
-      action: PayloadAction<SessionScope & IncomingText>,
-    ) {
+    incomingReceived(state, action: PayloadAction<IncomingReceivedPayload>) {
       const p = action.payload
       if (Object.hasOwn(state.seenMessageIds, p.idMessage)) return
       state.seenMessageIds[p.idMessage] = true
@@ -86,9 +62,7 @@ const slice = createSlice({
     },
     messageStatusUpdated(
       state,
-      action: PayloadAction<
-        { idMessage: string; status: DeliveryStatus } & Partial<SessionScope>
-      >,
+      action: PayloadAction<MessageStatusUpdatedPayload>,
     ) {
       const { idMessage, status } = action.payload
       for (const messages of Object.values(state.messagesByChat)) {
@@ -103,12 +77,7 @@ const slice = createSlice({
         return
       }
     },
-    outgoingStarted(
-      state,
-      action: PayloadAction<
-        SessionScope & { message: Message; retryKey?: string }
-      >,
-    ) {
+    outgoingStarted(state, action: PayloadAction<OutgoingStartedPayload>) {
       const { message, retryKey } = action.payload
       const messages = (state.messagesByChat[message.chatId] ??= [])
       const previous = retryKey

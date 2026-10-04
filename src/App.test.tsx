@@ -8,22 +8,23 @@ import {
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import App from './App'
-import chatStyles from './components/ChatWindow.module.css'
-import { GreenApiError } from './api/greenApiClient'
+import { createGreenApiError } from './api/errors'
+import { createFakeClient } from './api/fakeClient'
 import type { ReceivedNotification } from './api/types'
+import App from './App'
+import type { AppTestContext } from './App.test.types'
+import chatStyles from './components/ChatWindow.module.css'
+import resolvedAccount from './fixtures/max.docs.check-account.json'
+import incomingText from './fixtures/max.docs.incoming-text.json'
+import telegramRead from './fixtures/telegram.live.outgoing-message-status-read.json'
+import telegramDelivered from './fixtures/telegram.live.outgoing-message-status.json'
+import whatsappRead from './fixtures/whatsapp.live.outgoing-message-status-read.json'
+import whatsappSent from './fixtures/whatsapp.live.outgoing-message-status-sent.json'
+import whatsappDelivered from './fixtures/whatsapp.live.outgoing-message-status.json'
+import { MESSENGERS } from './messengers/messengers'
 import { makeStore } from './store'
-import type { AppStore } from './store'
 import { loggedOut } from './store/sessionSlice'
-import { createFakeClient } from './test/fakeClient'
-import { MESSENGERS } from './messengers'
-import incomingText from './test/fixtures/max.docs.incoming-text.json'
-import telegramDelivered from './test/fixtures/telegram.live.outgoing-message-status.json'
-import telegramRead from './test/fixtures/telegram.live.outgoing-message-status-read.json'
-import whatsappSent from './test/fixtures/whatsapp.live.outgoing-message-status-sent.json'
-import whatsappDelivered from './test/fixtures/whatsapp.live.outgoing-message-status.json'
-import whatsappRead from './test/fixtures/whatsapp.live.outgoing-message-status-read.json'
-import resolvedAccount from './test/fixtures/max.docs.check-account.json'
+import type { AppStore } from './store/types'
 
 const stores: AppStore[] = []
 const phone = '79990000002'
@@ -50,14 +51,14 @@ function setup() {
   const queue: ReceivedNotification[] = []
   let deliver: ((notification: ReceivedNotification) => void) | undefined
   client.receiveNotification.mockImplementation((_timeout, signal) => {
-    if (signal?.aborted) return Promise.reject(new GreenApiError('aborted'))
+    if (signal?.aborted) return Promise.reject(createGreenApiError('aborted'))
     const notification = queue.shift()
     if (notification) return Promise.resolve(notification)
     // Пустая очередь ждёт события или отмены, не создавая таймеров и busy loop.
     return new Promise((resolve, reject) => {
       const abort = () => {
         deliver = undefined
-        reject(new GreenApiError('aborted'))
+        reject(createGreenApiError('aborted'))
       }
       deliver = (next) => {
         signal?.removeEventListener('abort', abort)
@@ -82,9 +83,7 @@ function setup() {
   }
 }
 
-type Context = ReturnType<typeof setup>
-
-async function submitLogin({ user }: Context) {
+async function submitLogin({ user }: AppTestContext) {
   expect(
     screen.getByRole('heading', { level: 1, name: 'Подключите мессенджер' }),
   ).toBeInTheDocument()
@@ -97,7 +96,7 @@ async function submitLogin({ user }: Context) {
   await user.click(screen.getByRole('button', { name: 'Войти' }))
 }
 
-async function login(context: Context) {
+async function login(context: AppTestContext) {
   await submitLogin(context)
   const { client } = context
   expect(
@@ -109,7 +108,7 @@ async function login(context: Context) {
   expect(client.getStateInstance).toHaveBeenCalledTimes(1)
 }
 
-async function openChat({ user, client }: Context) {
+async function openChat({ user, client }: AppTestContext) {
   await user.type(screen.getByRole('textbox', { name: 'Новый чат' }), phone)
   await user.click(screen.getByRole('button', { name: 'Открыть чат' }))
   expect(
@@ -229,7 +228,9 @@ test('ошибка сохраняет текст, повтор отправля�
   const context = setup()
   await login(context)
   await openChat(context)
-  context.client.sendMessage.mockRejectedValueOnce(new GreenApiError('network'))
+  context.client.sendMessage.mockRejectedValueOnce(
+    createGreenApiError('network'),
+  )
   const composer = screen.getByRole('textbox', { name: 'Сообщение' })
   await context.user.type(composer, 'Сохранённый текст')
   await context.user.keyboard('{Enter}')
@@ -278,7 +279,7 @@ test.each(['MAX', 'WhatsApp'])(
   async (messenger) => {
     const context = setup()
     context.client.getStateInstance.mockRejectedValueOnce(
-      new GreenApiError('auth', 401),
+      createGreenApiError('auth', 401),
     )
     await submitLogin(context)
     expect(

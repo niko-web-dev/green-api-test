@@ -1,6 +1,6 @@
 import { vi } from 'vitest'
-import { GreenApiError } from '../api/greenApiClient'
-import type { GreenApiClient } from '../api/greenApiClient'
+import { createGreenApiError } from './errors'
+import type { GreenApiClient } from './types'
 
 const waitForAbort: GreenApiClient['receiveNotification'] = (
   _timeout,
@@ -8,12 +8,12 @@ const waitForAbort: GreenApiClient['receiveNotification'] = (
 ) =>
   new Promise((_resolve, reject) => {
     if (signal?.aborted) {
-      reject(new GreenApiError('aborted'))
+      reject(createGreenApiError('aborted'))
       return
     }
     signal?.addEventListener(
       'abort',
-      () => reject(new GreenApiError('aborted')),
+      () => reject(createGreenApiError('aborted')),
       { once: true },
     )
   })

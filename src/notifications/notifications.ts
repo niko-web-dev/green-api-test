@@ -1,23 +1,5 @@
-import { isRecord } from './api/greenApiClient'
-
-export interface IncomingText {
-  chatId: string
-  idMessage: string
-  text: string
-  timestamp: number
-  chatName: string
-  typeInstance: string
-}
-
-export type DeliveryStatus = 'sent' | 'delivered' | 'read'
-
-export interface OutgoingMessageStatus {
-  chatId: string
-  idMessage: string
-  status: DeliveryStatus
-  timestamp: number
-  typeInstance: string
-}
+import { isRecord } from '../api/greenApiClient'
+import type { IncomingText, OutgoingMessageStatus } from './types'
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0

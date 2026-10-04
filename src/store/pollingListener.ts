@@ -1,14 +1,14 @@
 import { createListenerMiddleware, isAnyOf } from '@reduxjs/toolkit'
-import { describeError } from '../api/greenApiClient'
-import { MESSENGERS } from '../messengers'
-import { parseNotification } from '../notifications'
-import { runNotificationLoop } from '../notificationLoop'
+import { describeError } from '../api/errors'
+import { MESSENGERS } from '../messengers/messengers'
+import { parseNotification } from '../notifications/notifications'
+import { runNotificationLoop } from '../polling/notificationLoop'
 import { incomingReceived, messageStatusUpdated } from './chatsSlice'
 import {
-  sessionStarted,
+  connectionChanged,
   loggedOut,
   saveSession,
-  connectionChanged,
+  sessionStarted,
   warningChanged,
 } from './sessionSlice'
 import type { StoreExtra, StoreState } from './types'

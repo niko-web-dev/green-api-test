@@ -1,12 +1,6 @@
-import { GreenApiError } from './api/greenApiClient'
-import type { GreenApiClient, GreenApiErrorKind } from './api/greenApiClient'
-
-export type LoopStatus = 'online' | 'reconnecting' | 'stopped'
-
-export interface LoopHandlers {
-  onNotification(body: Record<string, unknown>): void
-  onStatus(status: LoopStatus, error?: GreenApiError): void
-}
+import { createGreenApiError, isGreenApiError } from '../api/errors'
+import type { GreenApiClient, GreenApiErrorKind } from '../api/types'
+import type { LoopHandlers, LoopStatus } from './types'
 
 const FIRST_RECEIVE_TIMEOUT_SEC = 5
 const RECEIVE_TIMEOUT_SEC = 20
@@ -74,9 +68,9 @@ export async function runNotificationLoop(
       if (signal.aborted) return
       // Отмена без нашего сигнала — обрыв транспорта, а не выход из цикла.
       const err =
-        error instanceof GreenApiError && error.kind !== 'aborted'
+        isGreenApiError(error) && error.kind !== 'aborted'
           ? error
-          : new GreenApiError('network')
+          : createGreenApiError('network')
       if (STOP_KINDS.has(err.kind)) {
         handlers.onStatus('stopped', err)
         return

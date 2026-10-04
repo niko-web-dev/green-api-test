@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createGreenApiClient, GreenApiError } from './api/greenApiClient'
-import { createFakeClient } from './test/fakeClient'
-import type { ReceivedNotification } from './api/types'
+import { createGreenApiError } from '../api/errors'
+import { createFakeClient } from '../api/fakeClient'
+import { createGreenApiClient } from '../api/greenApiClient'
+import type { ReceivedNotification } from '../api/types'
 import { runNotificationLoop } from './notificationLoop'
 
 function notification(receiptId = 1): ReceivedNotification {
@@ -137,7 +138,7 @@ describe('Цикл получения уведомлений', () => {
         .mockResolvedValueOnce(notification())
       if (result === 'ошибка')
         client.deleteNotification.mockRejectedValueOnce(
-          new GreenApiError('network'),
+          createGreenApiError('network'),
         )
       const loop = runNotificationLoop(client, handlers, signal)
       await flush()
@@ -176,7 +177,7 @@ describe('Цикл получения уведомлений', () => {
     'наращивает и сбрасывает паузу: %s',
     async (kind) => {
       const { client, handlers, controller, signal } = setup()
-      const error = new GreenApiError(kind)
+      const error = createGreenApiError(kind)
       for (let i = 0; i < 7; i++)
         client.receiveNotification.mockRejectedValueOnce(error)
       client.receiveNotification
@@ -213,7 +214,7 @@ describe('Цикл получения уведомлений', () => {
     'останавливается при %s',
     async (kind) => {
       const { client, handlers, signal } = setup()
-      const error = new GreenApiError(kind)
+      const error = createGreenApiError(kind)
       client.receiveNotification.mockRejectedValueOnce(error)
       await runNotificationLoop(client, handlers, signal)
       expect(handlers.onStatus).toHaveBeenLastCalledWith('stopped', error)
@@ -244,7 +245,7 @@ describe('Цикл получения уведомлений', () => {
   it('отмена очищает паузу и слушатель', async () => {
     const { client, handlers, controller, signal } = setup()
     const removeListener = vi.spyOn(signal, 'removeEventListener')
-    const error = new GreenApiError('network')
+    const error = createGreenApiError('network')
     client.receiveNotification.mockRejectedValueOnce(error)
     const loop = runNotificationLoop(client, handlers, signal)
     await flush()
@@ -264,7 +265,7 @@ describe('Цикл получения уведомлений', () => {
   it('aborted без сигнала вызывает переподключение', async () => {
     const { client, handlers, controller, signal } = setup()
     client.receiveNotification.mockRejectedValueOnce(
-      new GreenApiError('aborted'),
+      createGreenApiError('aborted'),
     )
     const loop = runNotificationLoop(client, handlers, signal)
     await flush()
@@ -288,7 +289,7 @@ describe('Цикл получения уведомлений', () => {
         new Promise((_resolve, reject) => {
           deleteSignal?.addEventListener(
             'abort',
-            () => reject(new GreenApiError('aborted')),
+            () => reject(createGreenApiError('aborted')),
             { once: true },
           )
         }),
