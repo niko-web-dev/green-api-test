@@ -3,7 +3,7 @@ import type { FormEvent } from 'react'
 import { MESSENGERS } from '../messengers'
 import type { MessengerId } from '../messengers'
 import { useAppDispatch, useAppSelector } from '../store'
-import { selectSession } from '../store/sessionSlice'
+import { loggedOut, selectSession } from '../store/sessionSlice'
 import { login } from '../store/thunks'
 import Icon from './Icon'
 import styles from './LoginScreen.module.css'
@@ -11,13 +11,14 @@ import styles from './LoginScreen.module.css'
 export default function LoginScreen() {
   const dispatch = useAppDispatch()
   const session = useAppSelector(selectSession)
-  const [messenger, setMessenger] = useState<MessengerId>('max')
-  const [apiUrl, setApiUrl] = useState(MESSENGERS.max.defaultApiUrl)
+  const [messenger, setMessenger] = useState<MessengerId>('telegram')
+  const [apiUrl, setApiUrl] = useState(MESSENGERS.telegram.defaultApiUrl)
   const [idInstance, setIdInstance] = useState('')
   const [apiTokenInstance, setToken] = useState('')
   const [invalid, setInvalid] = useState<string | null>(null)
   const pending = session.loginRequestId !== null
   function choose(id: MessengerId) {
+    dispatch(loggedOut())
     setMessenger(id)
     setApiUrl(MESSENGERS[id].defaultApiUrl)
     setIdInstance('')

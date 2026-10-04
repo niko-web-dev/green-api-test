@@ -49,6 +49,7 @@
   line-height: 1.2;
   letter-spacing: -0.045em;
   margin: 12px 0;
+  text-align: center;
 }
 .intro {
   color: var(--muted);
@@ -104,16 +105,23 @@
   line-height: 1.5;
 }
 .submit {
+  position: relative;
   width: 100%;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 14px 18px;
+  justify-content: center;
+  padding: 14px 40px;
   background: var(--blue);
   color: white;
   border-radius: 11px;
   margin-top: 26px;
   font-weight: 650;
+}
+.submit span {
+  position: absolute;
+  right: 18px;
+  top: 50%;
+  transform: translateY(-50%);
 }
 .submit:hover:not(:disabled) {
   background: var(--blue-hover);

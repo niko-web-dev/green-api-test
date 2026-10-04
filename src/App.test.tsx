@@ -15,6 +15,7 @@ import { makeStore } from './store'
 import type { AppStore } from './store'
 import { loggedOut } from './store/sessionSlice'
 import { createFakeClient } from './test/fakeClient'
+import { MESSENGERS } from './messengers'
 import incomingText from './test/fixtures/max.docs.incoming-text.json'
 import resolvedAccount from './test/fixtures/max.docs.check-account.json'
 
@@ -66,6 +67,7 @@ function setup() {
   render(<App store={store} />)
   return {
     client,
+    store,
     user: userEvent.setup(),
     notify(notification: ReceivedNotification) {
       if (deliver) deliver(notification)
@@ -76,7 +78,7 @@ function setup() {
 
 type Context = ReturnType<typeof setup>
 
-async function login({ user, client }: Context) {
+async function submitLogin({ user }: Context) {
   expect(
     screen.getByRole('heading', { level: 1, name: 'Подключите мессенджер' }),
   ).toBeInTheDocument()
@@ -87,6 +89,11 @@ async function login({ user, client }: Context) {
   await user.type(screen.getByRole('textbox', { name: 'ID инстанса' }), id)
   await user.type(screen.getByLabelText('API токен'), crypto.randomUUID())
   await user.click(screen.getByRole('button', { name: 'Войти' }))
+}
+
+async function login(context: Context) {
+  await submitLogin(context)
+  const { client } = context
   expect(
     await screen.findByRole('complementary', { name: 'Список чатов' }),
   ).toBeInTheDocument()
@@ -110,6 +117,25 @@ async function openChat({ user, client }: Context) {
 }
 
 const feed = () => within(screen.getByRole('list', { name: 'Сообщения' }))
+
+test('на экране входа по умолчанию выбран Telegram и его адрес API', () => {
+  setup()
+  expect(screen.getByRole('button', { name: 'Telegram' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+  expect(screen.getByRole('button', { name: 'MAX' })).toHaveAttribute(
+    'aria-pressed',
+    'false',
+  )
+  expect(screen.getByRole('button', { name: 'WhatsApp' })).toHaveAttribute(
+    'aria-pressed',
+    'false',
+  )
+  expect(screen.getByRole('textbox', { name: 'API URL' })).toHaveValue(
+    MESSENGERS.telegram.defaultApiUrl,
+  )
+})
 
 test('вход, открытие чата и отправка показывают сообщение с галочкой', async () => {
   const context = setup()
@@ -239,4 +265,101 @@ test('ошибка сохраняет текст, повтор отправля�
     expect.any(AbortSignal),
   )
   expect(composer).toHaveValue('')
+})
+
+test.each(['MAX', 'WhatsApp'])(
+  'смена на %s очищает ошибку входа в интерфейсе и сторе',
+  async (messenger) => {
+    const context = setup()
+    context.client.getStateInstance.mockRejectedValueOnce(
+      new GreenApiError('auth', 401),
+    )
+    await submitLogin(context)
+    expect(
+      await screen.findByText(
+        'Не удалось авторизоваться. Проверьте учётные данные инстанса. (HTTP 401)',
+      ),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Войти' })).toBeEnabled()
+    expect(context.store.getState().session.loginRequestId).toBeNull()
+    expect(context.client.receiveNotification).not.toHaveBeenCalled()
+
+    await context.user.click(screen.getByRole('button', { name: messenger }))
+    expect(context.store.getState().session.error).toBeNull()
+    expect(context.store.getState().session.warning).toBeNull()
+    expect(context.store.getState().session.connection).toBe('idle')
+    expect(context.store.getState().chats.byId).toEqual({})
+    expect(context.store.getState().chats.messagesByChat).toEqual({})
+    expect(context.store.getState().chats.error).toBeNull()
+    expect(
+      screen.queryByText(/Не удалось авторизоваться/),
+    ).not.toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'ID инстанса' })).toHaveValue('')
+    expect(screen.getByLabelText('API токен')).toHaveValue('')
+    expect(sessionStorage.length).toBe(0)
+  },
+)
+
+test('отсутствующий аккаунт показывает понятную ошибку и позволяет проверить другой номер', async () => {
+  const context = setup()
+  await context.user.click(screen.getByRole('button', { name: 'Telegram' }))
+  await login(context)
+  context.client.checkAccount.mockResolvedValueOnce({
+    exist: false,
+    chatId: '',
+  })
+  await context.user.type(
+    screen.getByRole('textbox', { name: 'Новый чат' }),
+    phone,
+  )
+  await context.user.click(screen.getByRole('button', { name: 'Открыть чат' }))
+  expect(
+    await screen.findByText('Номер не зарегистрирован в Telegram'),
+  ).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Открыть чат' })).toBeEnabled()
+  expect(context.store.getState().chats.openRequestId).toBeNull()
+  expect(context.store.getState().chats.byId).toEqual({})
+  expect(context.client.sendMessage).not.toHaveBeenCalled()
+  await context.user.click(screen.getByRole('button', { name: 'Открыть чат' }))
+  expect(
+    await screen.findByRole('heading', { name: `+${phone}` }),
+  ).toBeInTheDocument()
+  expect(
+    screen.queryByText('Номер не зарегистрирован в Telegram'),
+  ).not.toBeInTheDocument()
+})
+
+test('выход во время ожидания очищает переписку, смена мессенджера и повторный вход чистые', async () => {
+  const context = setup()
+  await login(context)
+  await openChat(context)
+  await act(async () => context.notify({ receiptId: 1, body: incomingText }))
+  expect(
+    await feed().findByText(
+      incomingText.messageData.textMessageData.textMessage,
+    ),
+  ).toBeInTheDocument()
+  await waitFor(() =>
+    expect(context.client.receiveNotification).toHaveBeenCalledTimes(2),
+  )
+  const signal = context.client.receiveNotification.mock.calls[1]![1]!
+  await context.user.click(screen.getByRole('button', { name: 'Выйти' }))
+  expect(signal.aborted).toBe(true)
+  expect(context.store.getState().chats.messagesByChat).toEqual({})
+  expect(context.store.getState().chats.seenMessageIds).toEqual({})
+  expect(context.store.getState().chats.activeChatId).toBeNull()
+  expect(context.store.getState().session.error).toBeNull()
+  expect(sessionStorage.length).toBe(0)
+  await context.user.click(screen.getByRole('button', { name: 'Telegram' }))
+  await submitLogin(context)
+  expect(
+    await screen.findByRole('heading', { name: 'Telegram' }),
+  ).toBeInTheDocument()
+  expect(screen.getByText(/Здесь будут ваши диалоги/)).toBeInTheDocument()
+  expect(context.store.getState().chats.byId).toEqual({})
+  expect(context.store.getState().session.error).toBeNull()
+  expect(context.client.receiveNotification).toHaveBeenCalledTimes(3)
+  expect(context.client.receiveNotification.mock.calls[2]![1]!.aborted).toBe(
+    false,
+  )
 })
