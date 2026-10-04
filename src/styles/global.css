@@ -43,8 +43,9 @@ textarea::placeholder {
   color: #7d899c;
 }
 :focus-visible {
-  outline: 3px solid #1769eb;
-  outline-offset: 3px;
+  outline: 2px solid #1769eb;
+  outline-offset: 2px;
+  border-radius: 6px;
 }
 a {
   color: var(--blue);
