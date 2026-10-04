@@ -74,7 +74,7 @@ function httpErrorKind(status: number, body: string): GreenApiErrorKind {
   if (status === 466) return 'quota'
   if (status === 469) return 'phoneCheckLimit'
   if (status === 429) return 'rateLimit'
-  if (status === 499) return 'network'
+  if (status === 408 || status === 499) return 'network'
   if (status === 400 && /webhook[\s_-]*url/i.test(body)) return 'webhookSet'
   if (status === 400 && /instance (is|in) starting|not authorized/i.test(body))
     return 'notReady'

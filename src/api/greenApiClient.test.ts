@@ -128,6 +128,7 @@ describe('HTTP-клиент', () => {
   it.each<[number, string, GreenApiErrorKind]>([
     [401, token, 'auth'],
     [403, token, 'auth'],
+    [408, token, 'network'],
     [466, token, 'quota'],
     [429, token, 'rateLimit'],
     [469, token, 'phoneCheckLimit'],
