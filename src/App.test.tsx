@@ -6,6 +6,6 @@ test('показывает заголовок приложения', () => {
   render(<App />)
 
   expect(
-    screen.getByRole('heading', { name: 'GREEN-API Chat' }),
+    screen.getByRole('heading', { name: 'Подключите мессенджер' }),
   ).toBeInTheDocument()
 })

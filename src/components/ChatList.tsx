@@ -1,0 +1,100 @@
+import { MESSENGERS } from '../messengers'
+import { useAppDispatch, useAppSelector } from '../store'
+import { loggedOut, selectSession } from '../store/sessionSlice'
+import { chatSelected, selectChatList } from '../store/chatsSlice'
+import NewChatForm from './NewChatForm'
+import Icon from './Icon'
+import { formatTime } from './formatTime'
+import styles from './ChatList.module.css'
+
+const connectionLabels = {
+  idle: 'Подключаемся',
+  online: 'На связи',
+  reconnecting: 'Переподключение',
+  error: 'Ошибка соединения',
+}
+export default function ChatList() {
+  const dispatch = useAppDispatch()
+  const session = useAppSelector(selectSession)
+  const chats = useAppSelector(selectChatList)
+  const active = useAppSelector((state) => state.chats.activeChatId)
+  const messages = useAppSelector((state) => state.chats.messagesByChat)
+  if (!session.current) return null
+  const id = session.current.credentials.idInstance
+  const masked = id.length > 6 ? `${id.slice(0, 4)}••••${id.slice(-2)}` : '••••'
+  return (
+    <aside className={styles.sidebar} aria-label="Список чатов">
+      <header className={styles.header}>
+        <span className={styles.logo}>
+          <Icon name="chat" />
+        </span>
+        <div className={styles.account}>
+          <h1>{MESSENGERS[session.current.messenger].title}</h1>
+          <span>Инстанс {masked}</span>
+        </div>
+        <button
+          className="iconButton"
+          aria-label="Выйти"
+          onClick={() => dispatch(loggedOut())}
+        >
+          <Icon name="logout" />
+        </button>
+      </header>
+      <p className={styles.connection} role="status">
+        <i data-state={session.connection} />
+        {connectionLabels[session.connection]}
+      </p>
+      <div aria-live="polite" className={styles.mobileNotice}>
+        {session.warning && <p className="notice">{session.warning}</p>}
+        {session.connection === 'error' && (
+          <p className="notice error">
+            {session.error ?? 'Выйдите и подключитесь снова.'}
+          </p>
+        )}
+      </div>
+      <NewChatForm />
+      <div className={styles.listHeading}>
+        Сообщения <span>{chats.length}</span>
+      </div>
+      <ul className={styles.list}>
+        {chats.map((chat) => {
+          const last = messages[chat.chatId]?.at(-1)
+          return (
+            <li key={chat.chatId}>
+              <button
+                className={`${styles.chat} ${active === chat.chatId ? styles.active : ''}`}
+                aria-current={active === chat.chatId ? 'true' : undefined}
+                onClick={() => dispatch(chatSelected(chat.chatId))}
+              >
+                <span className={styles.avatar}>
+                  {chat.title.replace(/^\+/, '').slice(0, 2).toUpperCase()}
+                </span>
+                <span className={styles.chatText}>
+                  <span className={styles.chatTitle}>{chat.title}</span>
+                  <span className={styles.preview}>
+                    {last
+                      ? `${last.direction === 'out' ? 'Вы: ' : ''}${last.text}`
+                      : 'Начните разговор'}
+                  </span>
+                </span>
+                <time
+                  className={styles.time}
+                  dateTime={new Date(chat.lastActivity * 1000).toISOString()}
+                >
+                  {formatTime(chat.lastActivity)}
+                </time>
+              </button>
+            </li>
+          )
+        })}
+      </ul>
+      {!chats.length && (
+        <p className={styles.empty}>
+          Здесь будут ваши диалоги.
+          <br />
+          Начните новый чат по номеру телефона.
+        </p>
+      )}
+    </aside>
+  )
+}

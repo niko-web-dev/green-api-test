@@ -128,3 +128,5 @@ export const { sessionStarted, loggedOut, connectionChanged, warningChanged } =
 export default slice.reducer
 
 export const selectSessionId = (state: StoreState) => state.session.sessionId
+
+export const selectSession = (state: StoreState) => state.session

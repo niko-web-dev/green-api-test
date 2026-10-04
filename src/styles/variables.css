@@ -1,0 +1,15 @@
+:root {
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: #172337;
+  background: #f2f5f9;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  --blue: #1769eb;
+  --blue-hover: #1058ce;
+  --muted: #64748b;
+  --line: #e8edf3;
+  --surface: #fff;
+  --radius: 16px;
+  --space: 8px;
+}

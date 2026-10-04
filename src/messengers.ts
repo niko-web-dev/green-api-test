@@ -42,16 +42,7 @@ const resolveAccount: MessengerProfile['resolveChat'] = async (
   return exist ? { chatId, title: `+${digits}` } : null
 }
 
-// defaultApiUrl — подсказка для формы: хост зависит от инстанса и берётся из кабинета GREEN-API.
 export const MESSENGERS: Record<MessengerId, MessengerProfile> = {
-  max: {
-    title: 'MAX',
-    typeInstance: 'v3',
-    // Хост из https://green-api.com/v3/docs/request-format/ — не проверено на реальном инстансе.
-    defaultApiUrl: 'https://3100.api.green-api.com',
-    maxMessageLength: 4000,
-    resolveChat: resolveAccount,
-  },
   telegram: {
     title: 'Telegram',
     typeInstance: 'telegram',
@@ -71,5 +62,13 @@ export const MESSENGERS: Record<MessengerId, MessengerProfile> = {
         ? { chatId: `${digits}@c.us`, title: `+${digits}` }
         : null
     },
+  },
+  max: {
+    title: 'MAX',
+    typeInstance: 'v3',
+    // Хост из https://green-api.com/v3/docs/request-format/ — не проверено на реальном инстансе.
+    defaultApiUrl: 'https://3100.api.green-api.com',
+    maxMessageLength: 4000,
+    resolveChat: resolveAccount,
   },
 }

@@ -45,6 +45,10 @@ const slice = createSlice({
   name: 'chats',
   initialState,
   reducers: {
+    chatSelected(state, action: PayloadAction<string | null>) {
+      if (action.payload === null || Object.hasOwn(state.byId, action.payload))
+        state.activeChatId = action.payload
+    },
     incomingReceived(
       state,
       action: PayloadAction<SessionScope & IncomingText>,
@@ -156,10 +160,20 @@ const slice = createSlice({
   },
 })
 
-export const { incomingReceived, outgoingStarted } = slice.actions
+export const { incomingReceived, outgoingStarted, chatSelected } = slice.actions
 export default slice.reducer
 
 export const selectChatList = createSelector(
   [(state: StoreState) => state.chats.byId],
   (byId) => Object.values(byId).sort((a, b) => b.lastActivity - a.lastActivity),
 )
+
+export const selectActiveChat = (state: StoreState) =>
+  state.chats.activeChatId
+    ? state.chats.byId[state.chats.activeChatId]
+    : undefined
+const emptyMessages: Message[] = []
+export const selectActiveMessages = (state: StoreState) =>
+  (state.chats.activeChatId &&
+    state.chats.messagesByChat[state.chats.activeChatId]) ||
+  emptyMessages
