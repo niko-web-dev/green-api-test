@@ -33,24 +33,7 @@
   color: var(--muted);
 }
 .connection {
-  display: flex;
-  align-items: center;
-  gap: 6px;
   margin: 0 20px 20px 76px;
-  font-size: 11px;
-  color: var(--muted);
-}
-.connection i {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #b38729;
-}
-.connection i[data-state='online'] {
-  background: #23845d;
-}
-.connection i[data-state='error'] {
-  background: #c03936;
 }
 .newChat {
   padding: 20px;

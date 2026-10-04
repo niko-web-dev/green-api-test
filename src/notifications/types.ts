@@ -7,11 +7,12 @@ export interface IncomingText {
   typeInstance: string
 }
 
-export type DeliveryStatus = 'sent' | 'delivered' | 'read'
+export type DeliveryStatus =
+  'sent' | 'delivered' | 'read' | 'failed' | 'noAccount' | 'notInGroup'
 
 export interface OutgoingMessageStatus {
   chatId: string
-  idMessage: string
+  idMessage?: string
   status: DeliveryStatus
   timestamp: number
   typeInstance: string

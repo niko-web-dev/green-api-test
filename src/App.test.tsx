@@ -10,10 +10,11 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { createGreenApiError } from './api/errors'
 import { createFakeClient } from './api/fakeClient'
-import type { ReceivedNotification } from './api/types'
+import type { ReceivedNotification, SendMessageResponse } from './api/types'
 import App from './App'
 import type { AppTestContext } from './App.test.types'
 import chatStyles from './components/ChatWindow.module.css'
+import { maskInstance } from './components/formatInstance'
 import resolvedAccount from './fixtures/max.docs.check-account.json'
 import incomingText from './fixtures/max.docs.incoming-text.json'
 import telegramRead from './fixtures/telegram.live.outgoing-message-status-read.json'
@@ -23,7 +24,7 @@ import whatsappSent from './fixtures/whatsapp.live.outgoing-message-status-sent.
 import whatsappDelivered from './fixtures/whatsapp.live.outgoing-message-status.json'
 import { MESSENGERS } from './messengers/messengers'
 import { makeStore } from './store'
-import { loggedOut } from './store/sessionSlice'
+import { connectionChanged, loggedOut } from './store/sessionSlice'
 import type { AppStore } from './store/types'
 
 const stores: AppStore[] = []
@@ -122,6 +123,139 @@ async function openChat({ user, client }: AppTestContext) {
 }
 
 const feed = () => within(screen.getByRole('list', { name: 'Сообщения' }))
+
+test('небезопасный адрес API показывает ошибку без обращения к клиенту', async () => {
+  const context = setup()
+  const url = screen.getByRole('textbox', { name: 'API URL' })
+  await context.user.clear(url)
+  await context.user.type(url, 'https://evil.test')
+  await submitLogin(context)
+  expect(
+    screen.getByText('Укажите HTTPS-адрес API инстанса на домене GREEN-API.'),
+  ).toBeInTheDocument()
+  expect(context.client.getStateInstance).not.toHaveBeenCalled()
+  expect(screen.getByRole('button', { name: 'Войти' })).toBeEnabled()
+})
+
+test('открытый разговор содержит маскированный инстанс и все состояния соединения', async () => {
+  const context = setup()
+  await login(context)
+  await openChat(context)
+  const account = within(
+    screen.getByRole('group', { name: 'Текущее подключение' }),
+  )
+  const session = context.store.getState().session
+  const id = session.current!.credentials.idInstance
+  expect(
+    account.getByText(`Telegram · Инстанс ${maskInstance(id)}`),
+  ).toBeInTheDocument()
+  expect(account.queryByText(new RegExp(id))).not.toBeInTheDocument()
+  for (const [connection, label] of [
+    ['idle', 'Подключаемся'],
+    ['online', 'На связи'],
+    ['reconnecting', 'Переподключение'],
+    ['error', 'Ошибка соединения'],
+    ['standby', 'В другой вкладке'],
+  ] as const) {
+    await act(async () =>
+      context.store.dispatch(
+        connectionChanged({ sessionId: session.sessionId, connection }),
+      ),
+    )
+    expect(account.getByRole('status')).toHaveTextContent(label)
+  }
+})
+
+test.each(['read', 'failed', 'noAccount'] as const)(
+  'ранний %s подтверждается в очереди и применяется после ответа SendMessage',
+  async (status) => {
+    const context = setup()
+    await login(context)
+    await openChat(context)
+    let confirm!: (value: SendMessageResponse) => void
+    context.client.sendMessage.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          confirm = resolve
+        }),
+    )
+    await context.user.type(
+      screen.getByRole('textbox', { name: 'Сообщение' }),
+      'Текст',
+    )
+    await context.user.click(
+      screen.getByRole('button', { name: 'Отправить сообщение' }),
+    )
+    const secret = crypto.randomUUID()
+    await act(async () =>
+      context.notify({
+        receiptId: 9001,
+        body: {
+          ...telegramDelivered.body,
+          idMessage: 'sent-1',
+          status,
+          description: secret,
+        },
+      }),
+    )
+    await waitFor(() =>
+      expect(context.client.deleteNotification).toHaveBeenCalledWith(
+        9001,
+        expect.any(AbortSignal),
+      ),
+    )
+    expect(feed().getByLabelText('Отправляется')).toBeInTheDocument()
+    await act(async () => confirm({ idMessage: 'sent-1' }))
+    expect(
+      await feed().findByLabelText(
+        status === 'read' ? 'Прочитано' : 'Не отправлено',
+      ),
+    ).toBeInTheDocument()
+    expect(context.store.getState().chats.pendingStatuses).toEqual([])
+    expect(screen.queryByText(secret)).not.toBeInTheDocument()
+    if (status !== 'read') {
+      expect(
+        feed().getByRole('button', { name: 'Повторить' }),
+      ).toBeInTheDocument()
+      if (status === 'noAccount')
+        expect(feed().getByText(/Получатель недоступен/)).toBeInTheDocument()
+    }
+  },
+)
+
+test('ошибка без idMessage предупреждает, но не меняет произвольное сообщение', async () => {
+  const context = setup()
+  await login(context)
+  await openChat(context)
+  await context.user.type(
+    screen.getByRole('textbox', { name: 'Сообщение' }),
+    'Текст',
+  )
+  await context.user.click(
+    screen.getByRole('button', { name: 'Отправить сообщение' }),
+  )
+  expect(await feed().findByLabelText(sentLabel)).toBeInTheDocument()
+  await act(async () =>
+    context.notify({
+      receiptId: 9002,
+      body: {
+        ...telegramDelivered.body,
+        idMessage: undefined,
+        status: 'failed',
+      },
+    }),
+  )
+  await waitFor(() =>
+    expect(context.client.deleteNotification).toHaveBeenCalledWith(
+      9002,
+      expect.any(AbortSignal),
+    ),
+  )
+  expect(context.store.getState().session.warning).toContain(
+    'в уведомлении нет его идентификатора',
+  )
+  expect(feed().getByLabelText(sentLabel)).toBeInTheDocument()
+})
 
 test('на экране входа по умолчанию выбран Telegram и его адрес API', () => {
   setup()

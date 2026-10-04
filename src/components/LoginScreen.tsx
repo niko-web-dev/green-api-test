@@ -1,5 +1,7 @@
 import type { FormEvent } from 'react'
 import { useState } from 'react'
+import { normalizeApiUrl } from '../api/apiUrl'
+import { createGreenApiError, describeError } from '../api/errors'
 import { MESSENGERS } from '../messengers/messengers'
 import type { MessengerId } from '../messengers/types'
 import { useAppDispatch, useAppSelector } from '../store'
@@ -28,6 +30,11 @@ export default function LoginScreen() {
   function submit(event: FormEvent) {
     event.preventDefault()
     if (pending) return
+    const normalizedUrl = normalizeApiUrl(apiUrl)
+    if (!normalizedUrl) {
+      setInvalid(describeError(createGreenApiError('invalidApiUrl')))
+      return
+    }
     if (!/^\d+$/.test(idInstance.trim()) || !apiTokenInstance.trim()) {
       setInvalid('Укажите ID инстанса цифрами и токен из личного кабинета.')
       return
@@ -38,7 +45,7 @@ export default function LoginScreen() {
         messenger,
         sessionId: session.sessionId,
         credentials: {
-          apiUrl: apiUrl.trim(),
+          apiUrl: normalizedUrl,
           idInstance: idInstance.trim(),
           apiTokenInstance: apiTokenInstance.trim(),
         },

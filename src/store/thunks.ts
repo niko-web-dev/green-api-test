@@ -1,5 +1,10 @@
 import { createAsyncThunk } from '@reduxjs/toolkit'
-import { describeError, isGreenApiError } from '../api/errors'
+import {
+  createGreenApiError,
+  describeError,
+  isGreenApiError,
+} from '../api/errors'
+import { normalizeApiUrl } from '../api/apiUrl'
 import {
   MESSENGERS,
   normalizePhone,
@@ -41,9 +46,15 @@ export const login = createOperation<void, LoginArg>(
   'session/login',
   async (arg, api) => {
     try {
+      const apiUrl = normalizeApiUrl(arg.credentials.apiUrl)
+      if (!apiUrl)
+        return api.rejectWithValue(
+          describeError(createGreenApiError('invalidApiUrl')),
+        )
+      const credentials = { ...arg.credentials, apiUrl }
       const signal = AbortSignal.any([api.signal, api.extra.getSignal()])
       const state = await api.extra
-        .createClient(arg.credentials)
+        .createClient(credentials)
         .getStateInstance(signal)
       if (
         signal.aborted ||
@@ -59,7 +70,7 @@ export const login = createOperation<void, LoginArg>(
       api.dispatch(
         sessionStarted({
           messenger: arg.messenger,
-          credentials: arg.credentials,
+          credentials,
         }),
       )
     } catch (error) {
@@ -169,7 +180,8 @@ export const sendMessage = createAsyncThunk<SendResult, SendArg, SendConfig>(
     } catch (error) {
       const uncertain =
         submitted &&
-        (!isGreenApiError(error) || ['network', 'aborted'].includes(error.kind))
+        (!isGreenApiError(error) ||
+          ['network', 'aborted', 'server'].includes(error.kind))
       return api.rejectWithValue({
         status: uncertain ? 'unknown' : 'failed',
         error: uncertain

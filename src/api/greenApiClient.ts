@@ -1,4 +1,5 @@
 import { createGreenApiError } from './errors'
+import { normalizeApiUrl } from './apiUrl'
 import type {
   Credentials,
   GreenApiClient,
@@ -40,7 +41,9 @@ export function createGreenApiClient(
   c: Credentials,
   fetchImpl: typeof fetch = globalThis.fetch,
 ): GreenApiClient {
-  const baseUrl = `${c.apiUrl.replace(/\/+$/, '')}/waInstance${c.idInstance}`
+  const apiUrl = normalizeApiUrl(c.apiUrl)
+  if (!apiUrl) throw createGreenApiError('invalidApiUrl')
+  const baseUrl = `${apiUrl}/waInstance${c.idInstance}`
 
   async function request<T>(
     method: string,
@@ -63,6 +66,8 @@ export function createGreenApiClient(
         `${baseUrl}/${method}/${c.apiTokenInstance}${options.suffix ?? ''}`,
         {
           method: options.verb ?? 'GET',
+          // Перенаправление не должно переносить URL с токеном на другой хост.
+          redirect: 'error',
           signal: requestSignal,
           ...(options.body === undefined
             ? {}

@@ -8,7 +8,7 @@ import { createGreenApiClient } from './greenApiClient'
 import type { Credentials, GreenApiErrorKind } from './types'
 
 const credentials: Credentials = {
-  apiUrl: 'https://example.test',
+  apiUrl: 'https://4100.api.green-api.com',
   idInstance: '0000000000',
   apiTokenInstance: 'TEST_ONLY_SECRET_DO_NOT_DISPLAY',
 }
@@ -56,6 +56,7 @@ describe('HTTP-клиент', () => {
         `${prefix}/getStateInstance/${token}`,
         {
           method: 'GET',
+          redirect: 'error',
           signal: expect.any(AbortSignal),
         },
       )
@@ -97,6 +98,7 @@ describe('HTTP-клиент', () => {
         `${prefix}/${method}/${token}${suffix}`,
         {
           method: verb,
+          redirect: 'error',
           signal: expect.any(AbortSignal),
           ...(body === undefined
             ? {}

@@ -76,7 +76,7 @@ function tab(session?: Session) {
   const current: Session = session ?? {
     messenger: 'telegram',
     credentials: {
-      apiUrl: 'https://example.com',
+      apiUrl: 'https://4100.api.green-api.com',
       idInstance: crypto.randomUUID(),
       apiTokenInstance: crypto.randomUUID(),
     },

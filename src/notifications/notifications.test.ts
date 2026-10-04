@@ -217,15 +217,37 @@ describe('Разбор статусов доставки', () => {
     instanceData: { typeInstance: 'telegram' },
   }
 
-  it.each(['sent', 'delivered', 'read'])('распознаёт статус %s', (status) => {
-    expect(parseNotification({ ...body, status })).toEqual({
-      chatId: body.chatId,
-      idMessage: body.idMessage,
-      status,
-      timestamp: body.timestamp,
-      typeInstance: 'telegram',
-    })
-  })
+  it.each(['sent', 'delivered', 'read', 'failed', 'noAccount', 'notInGroup'])(
+    'распознаёт статус %s',
+    (status) => {
+      expect(parseNotification({ ...body, status })).toEqual({
+        chatId: body.chatId,
+        idMessage: body.idMessage,
+        status,
+        timestamp: body.timestamp,
+        typeInstance: 'telegram',
+      })
+    },
+  )
+
+  it.each(['failed', 'noAccount'])(
+    'сохраняет ошибку %s без idMessage для предупреждения',
+    (status) => {
+      const parsed = parseNotification({
+        ...body,
+        idMessage: undefined,
+        status,
+      })
+      expect(parsed).toMatchObject({
+        chatId: body.chatId,
+        status,
+        typeInstance: 'telegram',
+      })
+      expect(
+        parsed && 'status' in parsed ? parsed.idMessage : null,
+      ).toBeUndefined()
+    },
+  )
 
   it.each([
     { chatId: undefined },
@@ -238,7 +260,6 @@ describe('Разбор статусов доставки', () => {
     { idMessage: 123 },
     { status: undefined },
     { status: 123 },
-    { status: 'failed' },
     { status: 'unknown' },
     { status: 'READ' },
     { status: ' read ' },

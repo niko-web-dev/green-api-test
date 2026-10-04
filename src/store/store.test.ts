@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createGreenApiError, describeError } from '../api/errors'
 import { createFakeClient } from '../api/fakeClient'
+import { createGreenApiClient } from '../api/greenApiClient'
 import type { Credentials, ReceivedNotification } from '../api/types'
 import { MESSENGERS } from '../messengers/messengers'
 import type { MessengerId } from '../messengers/types'
@@ -34,7 +35,7 @@ function deferred<T>() {
 
 function credentials(): Credentials {
   return {
-    apiUrl: 'https://example.com',
+    apiUrl: 'https://4100.api.green-api.com',
     idInstance: crypto.randomUUID(),
     apiTokenInstance: crypto.randomUUID(),
   }
@@ -114,6 +115,28 @@ afterEach(async () => {
 })
 
 describe('Вход и восстановление', () => {
+  it.each(['вход', 'восстановление'])(
+    'не отправляет credentials на посторонний адрес: %s',
+    async (mode) => {
+      const { store, client, session, createClient } = setup('telegram', false)
+      const unsafe = {
+        ...session,
+        credentials: { ...session.credentials, apiUrl: 'https://evil.test' },
+      }
+      if (mode === 'восстановление') {
+        sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(unsafe))
+        await store.dispatch(restoreSession())
+        expect(sessionStorage.getItem(SESSION_STORAGE_KEY)).toBeNull()
+      } else await store.dispatch(login({ ...unsafe, sessionId: sid(store) }))
+      expect(createClient).not.toHaveBeenCalled()
+      expect(client.getStateInstance).not.toHaveBeenCalled()
+      expect(store.getState().session.current).toBeNull()
+      expect(store.getState().session.error).toBe(
+        'Укажите HTTPS-адрес API инстанса на домене GREEN-API.',
+      )
+    },
+  )
+
   it('авторизация запускает получение уведомлений', async () => {
     const { store, client, session } = setup('telegram', false)
     const result = await store.dispatch(
@@ -292,6 +315,47 @@ describe('Открытие чата', () => {
 })
 
 describe('Отправка', () => {
+  it.each([
+    [200, 'повреждённый JSON'],
+    [502, 'ошибка шлюза'],
+  ])(
+    'HTTP %s без подтверждения оставляет неизвестный результат',
+    async (status, body) => {
+      const client = createFakeClient()
+      client.checkAccount.mockResolvedValue({ exist: true, chatId: '10000002' })
+      const fetchImpl = vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(new Response(body, { status }))
+      const store = makeStore({
+        createClient: (c) => ({
+          ...client,
+          sendMessage: createGreenApiClient(c, fetchImpl).sendMessage,
+        }),
+      })
+      stores.push(store)
+      store.dispatch(
+        sessionStarted({ messenger: 'telegram', credentials: credentials() }),
+      )
+      await store.dispatch(
+        openChat({ sessionId: sid(store), phoneInput: '79990000002' }),
+      )
+      await store.dispatch(
+        sendMessage({
+          sessionId: sid(store),
+          chatId: '10000002',
+          text: 'Текст',
+        }),
+      )
+      expect(messages(store)[0]).toMatchObject({
+        status: 'unknown',
+        text: 'Текст',
+      })
+      expect(messages(store)[0]?.error).toContain('дубликат')
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+    },
+  )
+
   it('подтверждённая отправка становится sent', async () => {
     const { store, client } = setup()
     await store.dispatch(

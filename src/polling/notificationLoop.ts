@@ -45,25 +45,25 @@ export async function runNotificationLoop(
         status === 'online' ? RECEIVE_TIMEOUT_SEC : FIRST_RECEIVE_TIMEOUT_SEC
       const notification = await client.receiveNotification(timeoutSec, signal)
       if (signal.aborted) return
+      if (notification !== null) {
+        const { receiptId, body } = notification
+        // Повтор после неудачного delete допустим: дубли отсекает стор по idMessage.
+        // Подтверждаем и нерелевантные уведомления, иначе очередь встанет на них.
+        try {
+          handlers.onNotification(body)
+        } catch {
+          // Ошибка обработчика не должна блокировать FIFO-очередь: подтверждаем и такое событие.
+        }
+        if (signal.aborted) return
+        await client.deleteNotification(receiptId, signal)
+        if (signal.aborted) return
+      }
+      // Успех receive не отменяет сбой delete: восстановление подтверждает полный цикл.
+      backoffMs = INITIAL_BACKOFF_MS
       if (status !== 'online') {
         status = 'online'
         handlers.onStatus(status)
       }
-      backoffMs = INITIAL_BACKOFF_MS
-      if (signal.aborted) return
-      if (notification === null) continue
-
-      const { receiptId, body } = notification
-      // Повтор после неудачного delete допустим: дубли отсекает стор по idMessage.
-      // Подтверждаем и нерелевантные уведомления, иначе очередь встанет на них.
-      try {
-        handlers.onNotification(body)
-      } catch {
-        // Ошибка обработчика не должна блокировать FIFO-очередь: подтверждаем и такое событие.
-      }
-      if (signal.aborted) return
-      await client.deleteNotification(receiptId, signal)
-      if (signal.aborted) return
     } catch (error) {
       if (signal.aborted) return
       // Отмена без нашего сигнала — обрыв транспорта, а не выход из цикла.
