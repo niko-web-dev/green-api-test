@@ -1,4 +1,5 @@
 import { isRecord } from '../api/greenApiClient'
+import { deliveryFailure, isDeliveryStatus } from './messageStatus'
 import type { IncomingText, OutgoingMessageStatus } from './types'
 
 function isNonEmptyString(value: unknown): value is string {
@@ -15,9 +16,10 @@ export function parseNotification(
       !isRecord(instanceData) ||
       !isNonEmptyString(instanceData.typeInstance) ||
       !isNonEmptyString(chatId) ||
-      !isNonEmptyString(idMessage) ||
-      typeof status !== 'string' ||
-      (status !== 'sent' && status !== 'delivered' && status !== 'read') ||
+      !isDeliveryStatus(status) ||
+      (idMessage === undefined
+        ? !deliveryFailure(status)
+        : !isNonEmptyString(idMessage)) ||
       typeof timestamp !== 'number' ||
       !Number.isFinite(timestamp) ||
       timestamp < 0
@@ -25,7 +27,7 @@ export function parseNotification(
       return null
     return {
       chatId,
-      idMessage,
+      idMessage: isNonEmptyString(idMessage) ? idMessage : undefined,
       status,
       timestamp,
       typeInstance: instanceData.typeInstance,

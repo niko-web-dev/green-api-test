@@ -2,6 +2,7 @@ import { createListenerMiddleware, isAnyOf } from '@reduxjs/toolkit'
 import { describeError } from '../api/errors'
 import { MESSENGERS } from '../messengers/messengers'
 import { parseNotification } from '../notifications/notifications'
+import { deliveryFailure } from '../notifications/messageStatus'
 import { runNotificationLoop } from '../polling/notificationLoop'
 import { incomingReceived, messageStatusUpdated } from './chatsSlice'
 import {
@@ -48,9 +49,23 @@ export function createPollingListener(extra: StoreExtra) {
                     }),
                   )
                 }
-                if ('status' in parsed)
-                  api.dispatch(messageStatusUpdated({ ...parsed, sessionId }))
-                else api.dispatch(incomingReceived({ ...parsed, sessionId }))
+                if ('status' in parsed) {
+                  if (parsed.idMessage)
+                    api.dispatch(
+                      messageStatusUpdated({
+                        ...parsed,
+                        idMessage: parsed.idMessage,
+                        sessionId,
+                      }),
+                    )
+                  else
+                    api.dispatch(
+                      warningChanged({
+                        sessionId,
+                        warning: `${deliveryFailure(parsed.status)} Не удалось определить сообщение: в уведомлении нет его идентификатора.`,
+                      }),
+                    )
+                } else api.dispatch(incomingReceived({ ...parsed, sessionId }))
               },
               onStatus(status, error) {
                 api.dispatch(

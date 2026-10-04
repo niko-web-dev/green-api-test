@@ -17,6 +17,12 @@
   margin: 0 0 5px;
   overflow-wrap: anywhere;
 }
+.chatInfo {
+  min-width: 0;
+}
+.mobileAccount {
+  display: none;
+}
 .header p {
   font-size: 11px;
   color: var(--muted);
@@ -169,6 +175,21 @@
   }
   .headerNote {
     display: none;
+  }
+  .mobileAccount {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px 12px;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--line);
+    background: white;
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .mobileConnection {
+    margin: 0;
   }
   .feed {
     padding: 20px 16px;

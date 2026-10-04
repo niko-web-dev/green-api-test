@@ -1,6 +1,7 @@
 import type { GreenApiError, GreenApiErrorKind } from './types'
 
 const MESSAGES: Record<GreenApiErrorKind, string> = {
+  invalidApiUrl: 'Укажите HTTPS-адрес API инстанса на домене GREEN-API.',
   notReady:
     'Инстанс запускается или не авторизован. Проверьте его состояние в кабинете GREEN-API.',
   phoneCheckLimit:

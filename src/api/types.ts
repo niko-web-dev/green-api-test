@@ -27,6 +27,7 @@ export interface SendMessageResponse {
 }
 
 export type GreenApiErrorKind =
+  | 'invalidApiUrl'
   | 'auth'
   | 'notReady'
   | 'phoneCheckLimit'

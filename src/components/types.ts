@@ -11,3 +11,7 @@ export interface ComposerProps {
 export interface MessageBubbleProps {
   message: Message
 }
+
+export interface ConnectionStatusProps {
+  className?: string
+}

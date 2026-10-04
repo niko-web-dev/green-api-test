@@ -6,14 +6,9 @@ import styles from './ChatList.module.css'
 import Icon from './Icon'
 import NewChatForm from './NewChatForm'
 import { formatTime } from './formatTime'
+import { maskInstance } from './formatInstance'
+import ConnectionStatus from './ConnectionStatus'
 
-const connectionLabels = {
-  idle: 'Подключаемся',
-  online: 'На связи',
-  reconnecting: 'Переподключение',
-  error: 'Ошибка соединения',
-  standby: 'В другой вкладке',
-}
 export default function ChatList() {
   const dispatch = useAppDispatch()
   const session = useAppSelector(selectSession)
@@ -22,7 +17,7 @@ export default function ChatList() {
   const messages = useAppSelector((state) => state.chats.messagesByChat)
   if (!session.current) return null
   const id = session.current.credentials.idInstance
-  const masked = id.length > 6 ? `${id.slice(0, 4)}••••${id.slice(-2)}` : '••••'
+  const masked = maskInstance(id)
   return (
     <aside className={styles.sidebar} aria-label="Список чатов">
       <header className={styles.header}>
@@ -41,10 +36,7 @@ export default function ChatList() {
           <Icon name="logout" />
         </button>
       </header>
-      <p className={styles.connection} role="status">
-        <i data-state={session.connection} />
-        {connectionLabels[session.connection]}
-      </p>
+      <ConnectionStatus className={styles.connection} />
       <div aria-live="polite" className={styles.mobileNotice}>
         {session.warning && <p className="notice">{session.warning}</p>}
         {session.connection === 'error' && (

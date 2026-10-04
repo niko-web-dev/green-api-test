@@ -24,6 +24,35 @@ beforeEach(() => vi.useFakeTimers())
 afterEach(() => vi.useRealTimers())
 
 describe('Цикл получения уведомлений', () => {
+  it('наращивает паузу при повторных ошибках delete и восстанавливается только после подтверждения', async () => {
+    const { client, handlers, controller, signal } = setup()
+    for (let i = 0; i < 4; i++)
+      client.receiveNotification.mockResolvedValueOnce(notification())
+    for (let i = 0; i < 3; i++)
+      client.deleteNotification.mockRejectedValueOnce(
+        createGreenApiError('server'),
+      )
+    const loop = runNotificationLoop(client, handlers, signal)
+    try {
+      await flush()
+      for (const [index, delay] of [1000, 2000, 4000].entries()) {
+        await vi.advanceTimersByTimeAsync(delay - 1)
+        expect(client.deleteNotification).toHaveBeenCalledTimes(index + 1)
+        expect(
+          handlers.onStatus.mock.calls.filter(
+            ([status]) => status === 'online',
+          ),
+        ).toHaveLength(0)
+        await vi.advanceTimersByTimeAsync(1)
+      }
+      expect(client.deleteNotification).toHaveBeenCalledTimes(4)
+      expect(handlers.onStatus).toHaveBeenLastCalledWith('online')
+    } finally {
+      controller.abort()
+      await loop
+    }
+  })
+
   it('после HTTP 408 возобновляет получение и подтверждает следующее событие', async () => {
     const { controller, handlers, signal } = setup()
     const event = notification()
@@ -44,7 +73,7 @@ describe('Цикл получения уведомлений', () => {
       )
     const client = createGreenApiClient(
       {
-        apiUrl: 'https://example.test',
+        apiUrl: 'https://4100.api.green-api.com',
         idInstance: crypto.randomUUID(),
         apiTokenInstance: crypto.randomUUID(),
       },
@@ -301,7 +330,7 @@ describe('Цикл получения уведомлений', () => {
     await vi.advanceTimersByTimeAsync(60_000)
     expect(client.receiveNotification).toHaveBeenCalledTimes(1)
     expect(client.deleteNotification).toHaveBeenCalledExactlyOnceWith(1, signal)
-    expect(handlers.onStatus).toHaveBeenCalledExactlyOnceWith('online')
+    expect(handlers.onStatus).not.toHaveBeenCalled()
   })
 
   it('отбрасывает поздний ответ receive после отмены', async () => {
@@ -331,12 +360,13 @@ describe('Цикл получения уведомлений', () => {
     expect(client.receiveNotification).toHaveBeenCalledTimes(1)
   })
 
-  it('отмена статуса предотвращает обработку события', async () => {
+  it('отмена статуса после подтверждения предотвращает следующий receive', async () => {
     const { client, handlers, controller, signal } = setup()
     client.receiveNotification.mockResolvedValueOnce(notification())
     handlers.onStatus.mockImplementation(() => controller.abort())
     await runNotificationLoop(client, handlers, signal)
-    expect(handlers.onNotification).not.toHaveBeenCalled()
-    expect(client.deleteNotification).not.toHaveBeenCalled()
+    expect(handlers.onNotification).toHaveBeenCalledTimes(1)
+    expect(client.deleteNotification).toHaveBeenCalledExactlyOnceWith(1, signal)
+    expect(client.receiveNotification).toHaveBeenCalledTimes(1)
   })
 })

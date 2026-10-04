@@ -52,6 +52,7 @@ export interface ChatsState {
   activeChatId: string | null
   messagesByChat: Record<string, Message[]>
   seenMessageIds: Record<string, true>
+  pendingStatuses: PendingMessageStatus[]
   error: string | null
 }
 
@@ -117,10 +118,14 @@ export type WarningChangedPayload = SessionScope & { warning: string | null }
 
 export type IncomingReceivedPayload = SessionScope & IncomingText
 
-export type MessageStatusUpdatedPayload = {
+export interface PendingMessageStatus {
+  chatId: string
   idMessage: string
   status: DeliveryStatus
-} & Partial<SessionScope>
+}
+
+export type MessageStatusUpdatedPayload = PendingMessageStatus &
+  Partial<SessionScope>
 
 export type OutgoingStartedPayload = SessionScope & {
   message: Message

@@ -2,6 +2,11 @@ import type { PayloadAction } from '@reduxjs/toolkit'
 import { createSelector, createSlice, isAnyOf } from '@reduxjs/toolkit'
 import { loggedOut, sessionStarted } from './sessionSlice'
 import type { openChat, sendMessage } from './thunks'
+import {
+  applyMessageStatus,
+  clearSettledStatuses,
+  mergeDeliveryStatus,
+} from './messageStatus'
 import type {
   ChatsState,
   IncomingReceivedPayload,
@@ -17,17 +22,11 @@ const initialState: ChatsState = {
   activeChatId: null,
   messagesByChat: {},
   seenMessageIds: {},
+  pendingStatuses: [],
   error: null,
 }
 
-const statusRank: Record<Message['status'], number> = {
-  sending: 0,
-  failed: 0,
-  unknown: 0,
-  sent: 1,
-  delivered: 2,
-  read: 3,
-}
+const MAX_PENDING_STATUSES = 100
 
 const slice = createSlice({
   name: 'chats',
@@ -64,17 +63,31 @@ const slice = createSlice({
       state,
       action: PayloadAction<MessageStatusUpdatedPayload>,
     ) {
-      const { idMessage, status } = action.payload
-      for (const messages of Object.values(state.messagesByChat)) {
-        const message = messages.find(
-          (m) => m.direction === 'out' && m.idMessage === idMessage,
-        )
-        if (!message) continue
-        if (statusRank[status] > statusRank[message.status]) {
-          message.status = status
-          delete message.error
-        }
+      const { chatId, idMessage, status } = action.payload
+      const messages = state.messagesByChat[chatId]
+      const message = messages?.find(
+        (m) => m.direction === 'out' && m.idMessage === idMessage,
+      )
+      if (message) {
+        applyMessageStatus(message, status)
         return
+      }
+      // Статус может опередить HTTP-ответ; посторонние события без ожидающей отправки не храним.
+      if (
+        !messages?.some(
+          (m) =>
+            m.direction === 'out' && m.status === 'sending' && !m.idMessage,
+        )
+      )
+        return
+      const pending = state.pendingStatuses.find(
+        (event) => event.chatId === chatId && event.idMessage === idMessage,
+      )
+      if (pending) pending.status = mergeDeliveryStatus(pending.status, status)
+      else {
+        state.pendingStatuses.push({ chatId, idMessage, status })
+        if (state.pendingStatuses.length > MAX_PENDING_STATUSES)
+          state.pendingStatuses.shift()
       }
     },
     outgoingStarted(state, action: PayloadAction<OutgoingStartedPayload>) {
@@ -83,8 +96,11 @@ const slice = createSlice({
       const previous = retryKey
         ? messages.find((m) => m.key === retryKey)
         : undefined
-      if (previous) Object.assign(previous, message, { error: undefined })
-      else messages.push(message)
+      if (previous) {
+        // Повтор — новая попытка: поздний статус старого idMessage не должен подтвердить её.
+        delete previous.idMessage
+        Object.assign(previous, message, { error: undefined })
+      } else messages.push(message)
       messages.sort((a, b) => a.timestamp - b.timestamp)
       const chat = state.byId[message.chatId]
       if (chat)
@@ -123,10 +139,18 @@ const slice = createSlice({
         const { chatId, key, idMessage } = action.payload
         const message = state.messagesByChat[chatId]?.find((m) => m.key === key)
         if (!message) return
-        if (statusRank[message.status] < statusRank.sent)
+        if (message.status === 'sending' || message.status === 'unknown')
           message.status = 'sent'
         message.idMessage = idMessage
-        delete message.error
+        if (message.status !== 'failed') delete message.error
+        const pending = state.pendingStatuses.find(
+          (event) => event.chatId === chatId && event.idMessage === idMessage,
+        )
+        if (pending) applyMessageStatus(message, pending.status)
+        state.pendingStatuses = state.pendingStatuses.filter(
+          (event) => event.chatId !== chatId || event.idMessage !== idMessage,
+        )
+        clearSettledStatuses(state, chatId)
       },
     )
     builder.addMatcher(
@@ -144,6 +168,7 @@ const slice = createSlice({
         } else if (!message) {
           state.error = error
         }
+        clearSettledStatuses(state, action.meta.arg.chatId)
       },
     )
     builder.addMatcher(
