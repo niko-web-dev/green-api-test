@@ -25,39 +25,71 @@ export function createPollingListener(extra: StoreExtra) {
       if (loggedOut.match(action) || !current) return
       try {
         const client = extra.createClient(current.credentials)
-        await runNotificationLoop(
-          client,
-          {
-            onNotification(body) {
-              const parsed = parseNotification(body)
-              if (!parsed) return
-              if (
-                parsed.typeInstance !==
-                  MESSENGERS[current.messenger].typeInstance &&
-                !api.getState().session.warning
-              ) {
+        const run = async () => {
+          if (api.signal.aborted) return
+          api.dispatch(warningChanged({ sessionId, warning: null }))
+          api.dispatch(connectionChanged({ sessionId, connection: 'idle' }))
+          await runNotificationLoop(
+            client,
+            {
+              onNotification(body) {
+                const parsed = parseNotification(body)
+                if (!parsed) return
+                if (
+                  parsed.typeInstance !==
+                    MESSENGERS[current.messenger].typeInstance &&
+                  !api.getState().session.warning
+                ) {
+                  api.dispatch(
+                    warningChanged({
+                      sessionId,
+                      warning:
+                        'Тип инстанса не совпадает с выбранным мессенджером. Проверьте учётные данные.',
+                    }),
+                  )
+                }
+                api.dispatch(incomingReceived({ ...parsed, sessionId }))
+              },
+              onStatus(status, error) {
                 api.dispatch(
-                  warningChanged({
+                  connectionChanged({
                     sessionId,
-                    warning:
-                      'Тип инстанса не совпадает с выбранным мессенджером. Проверьте учётные данные.',
+                    connection: status === 'stopped' ? 'error' : status,
+                    error: error ? describeError(error) : null,
                   }),
                 )
-              }
-              api.dispatch(incomingReceived({ ...parsed, sessionId }))
+              },
             },
-            onStatus(status, error) {
-              api.dispatch(
-                connectionChanged({
-                  sessionId,
-                  connection: status === 'stopped' ? 'error' : status,
-                  error: error ? describeError(error) : null,
-                }),
-              )
-            },
+            api.signal,
+          )
+        }
+        if (!navigator.locks) {
+          // Старые браузеры и небезопасные контексты работают без защиты между вкладками.
+          await run()
+          return
+        }
+        const name = `green-api:${current.credentials.idInstance}`
+        let acquired = false
+        // ifAvailable несовместим с signal: отмену проверяем внутри пробного захвата.
+        await navigator.locks.request(
+          name,
+          { ifAvailable: true },
+          async (lock) => {
+            if (!lock || api.signal.aborted) return
+            acquired = true
+            await run()
           },
-          api.signal,
         )
+        if (acquired || api.signal.aborted) return
+        api.dispatch(connectionChanged({ sessionId, connection: 'standby' }))
+        api.dispatch(
+          warningChanged({
+            sessionId,
+            warning:
+              'Инстанс открыт в другой вкладке: новые сообщения приходят туда',
+          }),
+        )
+        await navigator.locks.request(name, { signal: api.signal }, run)
       } catch {
         if (!api.signal.aborted)
           api.dispatch(
