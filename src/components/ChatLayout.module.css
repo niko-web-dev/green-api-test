@@ -1,0 +1,35 @@
+.layout {
+  display: grid;
+  grid-template-columns: 336px minmax(0, 1fr);
+  height: 100dvh;
+  overflow: hidden;
+  background: #edf2f8;
+}
+.sidebar {
+  min-height: 0;
+  border-right: 1px solid var(--line);
+  background: white;
+}
+.main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+@media (max-width: 850px) and (min-width: 640px) {
+  .layout {
+    grid-template-columns: 290px minmax(0, 1fr);
+  }
+}
+@media (max-width: 639px) {
+  .layout {
+    display: flex;
+  }
+  .sidebar,
+  .main {
+    width: 100%;
+  }
+  .hiddenMobile {
+    display: none;
+  }
+}

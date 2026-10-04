@@ -1,0 +1,58 @@
+.wrapper {
+  padding: 12px 28px 18px;
+}
+.composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  background: white;
+  padding: 10px 12px 10px 18px;
+  border-radius: 16px;
+  border: 1px solid #e0e7f0;
+}
+.composer textarea {
+  flex: 1;
+  width: 0;
+  min-height: 42px;
+  max-height: 144px;
+  padding: 10px 0;
+  line-height: 24px;
+  resize: none;
+  border: 0;
+  background: none;
+  font-size: 14px;
+}
+.composer button {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: var(--blue);
+  color: white;
+}
+.composer button:disabled {
+  background: #e6edf7;
+  color: #6f84a1;
+  opacity: 1;
+}
+.hint {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 10px;
+  margin: 10px 4px 0;
+}
+.overLimit {
+  color: #a12d29;
+}
+@media (max-width: 639px) {
+  .wrapper {
+    padding: 10px 12px max(12px, env(safe-area-inset-bottom));
+  }
+  .hint {
+    font-size: 9px;
+  }
+}
