@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { GreenApiError } from './api/greenApiClient'
+import { createGreenApiClient, GreenApiError } from './api/greenApiClient'
 import { createFakeClient } from './test/fakeClient'
 import type { ReceivedNotification } from './api/types'
 import { runNotificationLoop } from './notificationLoop'
@@ -23,6 +23,59 @@ beforeEach(() => vi.useFakeTimers())
 afterEach(() => vi.useRealTimers())
 
 describe('Цикл получения уведомлений', () => {
+  it('после HTTP 408 возобновляет получение и подтверждает следующее событие', async () => {
+    const { controller, handlers, signal } = setup()
+    const event = notification()
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response('', { status: 408 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(event)))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ result: true })))
+      .mockImplementation(
+        (_url, init) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener(
+              'abort',
+              () => reject(new DOMException('', 'AbortError')),
+              { once: true },
+            )
+          }),
+      )
+    const client = createGreenApiClient(
+      {
+        apiUrl: 'https://example.test',
+        idInstance: crypto.randomUUID(),
+        apiTokenInstance: crypto.randomUUID(),
+      },
+      fetchImpl,
+    )
+    const deleteNotification = vi.spyOn(client, 'deleteNotification')
+    const loop = runNotificationLoop(client, handlers, signal)
+    try {
+      await flush()
+      expect(handlers.onStatus).toHaveBeenCalledExactlyOnceWith(
+        'reconnecting',
+        expect.objectContaining({ kind: 'network', status: 408 }),
+      )
+      await vi.advanceTimersByTimeAsync(999)
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(handlers.onStatus).toHaveBeenLastCalledWith('online')
+      expect(handlers.onNotification).toHaveBeenCalledExactlyOnceWith(
+        event.body,
+      )
+      expect(deleteNotification).toHaveBeenCalledExactlyOnceWith(
+        event.receiptId,
+        signal,
+      )
+      expect(fetchImpl).toHaveBeenCalledTimes(4)
+    } finally {
+      controller.abort()
+      await loop
+    }
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('обрабатывает событие до последовательного delete', async () => {
     const { client, handlers, controller, signal } = setup()
     const order: string[] = []
