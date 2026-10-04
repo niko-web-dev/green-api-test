@@ -792,3 +792,133 @@ describe('Восстановление и открытие', () => {
     ).toBe('max')
   })
 })
+
+function queuedText(receiptId: number): ReceivedNotification {
+  return {
+    receiptId,
+    body: {
+      typeWebhook: 'incomingMessageReceived',
+      idMessage: `queued-${receiptId}`,
+      timestamp: receiptId,
+      instanceData: { typeInstance: 'telegram' },
+      senderData: { chatId: '10000002', chatName: 'Получатель' },
+      messageData: {
+        typeMessage: 'textMessage',
+        textMessageData: { textMessage: `Очередь ${receiptId}` },
+      },
+    },
+  }
+}
+
+describe('Очередь и восстановление после обрыва', () => {
+  it('после входа обрабатывает накопленную очередь FIFO и ждёт подтверждения перед следующим receive', async () => {
+    const { store, client, session } = setup('telegram', false)
+    const acknowledged = deferred<void>()
+    client.receiveNotification
+      .mockResolvedValueOnce(queuedText(1))
+      .mockResolvedValueOnce(queuedText(2))
+    client.deleteNotification.mockReturnValueOnce(acknowledged.promise)
+    await store.dispatch(login({ ...session, sessionId: sid(store) }))
+    await flush()
+    expect(messages(store).map((m) => m.text)).toEqual(['Очередь 1'])
+    expect(client.receiveNotification).toHaveBeenCalledTimes(1)
+    expect(client.deleteNotification.mock.calls.map(([id]) => id)).toEqual([1])
+    acknowledged.resolve()
+    await flush()
+    expect(messages(store).map((m) => m.text)).toEqual([
+      'Очередь 1',
+      'Очередь 2',
+    ])
+    expect(client.deleteNotification.mock.calls.map(([id]) => id)).toEqual([
+      1, 2,
+    ])
+    expect(client.receiveNotification).toHaveBeenCalledTimes(3)
+    expect(store.getState().session.connection).toBe('online')
+  })
+
+  it('после 30 секунд без сети повторно подтверждает событие без дубля и получает следующее', async () => {
+    const { store, client, session } = setup('telegram', false)
+    const event = queuedText(1)
+    client.receiveNotification.mockResolvedValueOnce(event)
+    client.deleteNotification.mockRejectedValueOnce(
+      new GreenApiError('network'),
+    )
+    // Последующие receive выполнятся на 1, 3, 7 и 15 секундах; сеть вернётся на 30-й.
+    for (let i = 0; i < 4; i++)
+      client.receiveNotification.mockRejectedValueOnce(
+        new GreenApiError('network'),
+      )
+    client.receiveNotification
+      .mockResolvedValueOnce(event)
+      .mockResolvedValueOnce(queuedText(2))
+    store.dispatch(sessionStarted(session))
+    await flush()
+    expect(store.getState().session.connection).toBe('reconnecting')
+    expect(messages(store).map((m) => m.text)).toEqual(['Очередь 1'])
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(store.getState().session.connection).toBe('reconnecting')
+    expect(client.receiveNotification).toHaveBeenCalledTimes(5)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(store.getState().session.connection).toBe('online')
+    expect(store.getState().session.error).toBeNull()
+    expect(messages(store).map((m) => m.text)).toEqual([
+      'Очередь 1',
+      'Очередь 2',
+    ])
+    expect(client.deleteNotification.mock.calls.map(([id]) => id)).toEqual([
+      1, 1, 2,
+    ])
+    expect(client.receiveNotification).toHaveBeenCalledTimes(8)
+    expect(client.sendMessage).not.toHaveBeenCalled()
+    store.dispatch(loggedOut())
+    await flush()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it.each(['receive', 'пауза'])(
+    'выход во время %s отменяет старый цикл без ошибок, новый вход запускает чистый',
+    async (phase) => {
+      const { store, client, session, receiveSignals, activeReceives } = setup(
+        'telegram',
+        false,
+      )
+      const consoleError = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => {})
+      const unhandled = vi.fn()
+      window.addEventListener('unhandledrejection', unhandled)
+      try {
+        if (phase === 'пауза')
+          client.receiveNotification.mockRejectedValueOnce(
+            new GreenApiError('network'),
+          )
+        store.dispatch(sessionStarted(session))
+        store.dispatch(incomingReceived(incoming(sid(store))))
+        await flush()
+        store.dispatch(loggedOut())
+        await flush()
+        expect(activeReceives()).toBe(0)
+        expect(receiveSignals.every((signal) => signal.aborted)).toBe(true)
+        expect(vi.getTimerCount()).toBe(0)
+        expect(store.getState().session.error).toBeNull()
+        expect(store.getState().chats.byId).toEqual({})
+        expect(store.getState().chats.messagesByChat).toEqual({})
+        expect(sessionStorage.getItem(SESSION_STORAGE_KEY)).toBeNull()
+        client.receiveNotification.mockResolvedValueOnce(null)
+        await store.dispatch(login({ ...session, sessionId: sid(store) }))
+        await flush()
+        expect(store.getState().session.connection).toBe('online')
+        expect(store.getState().session.error).toBeNull()
+        expect(store.getState().chats.byId).toEqual({})
+        expect(activeReceives()).toBe(1)
+        await vi.advanceTimersByTimeAsync(60_000)
+        expect(client.receiveNotification).toHaveBeenCalledTimes(3)
+        expect(activeReceives()).toBe(1)
+        expect(consoleError).not.toHaveBeenCalled()
+        expect(unhandled).not.toHaveBeenCalled()
+      } finally {
+        window.removeEventListener('unhandledrejection', unhandled)
+      }
+    },
+  )
+})
